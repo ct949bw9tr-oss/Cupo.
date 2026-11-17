@@ -7,5 +7,5 @@ window.CUPO_CONFIG = {
   SUPABASE_URL: "https://TU-PROYECTO.supabase.co",
   SUPABASE_ANON_KEY: "TU_LLAVE_ANON",
   DEMO: false,
-  OTP_CHANNEL: "sms", // o "whatsapp"
+  OTP_LENGTH: 6, // dígitos del código que llega al correo (igual que en Supabase → Auth → Email)
 };

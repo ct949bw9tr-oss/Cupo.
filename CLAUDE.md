@@ -13,7 +13,8 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 ## Stack
 - **Frontend:** un solo archivo `web/index.html` (HTML + CSS + JS sin framework, mobile-first, rutas con hash `#/...`).
   Lee la configuración de `web/config.js` (copiar de `config.example.js`; está en .gitignore).
-- **Backend:** Supabase (Postgres + Auth por OTP al celular + Storage para flyers + Edge Functions).
+- **Backend:** Supabase (Postgres + Auth con código (OTP) al correo + Storage para flyers + Edge Functions).
+  El login era por celular (SMS); se cambió a correo el 17 nov 2026 para no pagar SMS. La identidad es el correo.
 - **Pagos:** Mercado Pago Checkout Pro (redirección a la página de pago de Mercado Pago). Moneda COP.
   Se cambió desde Wompi el 17 nov 2026 por problemas con la cuenta de Wompi.
 - **Hosting sugerido:** Vercel (sitio estático desde `web/`).
@@ -28,7 +29,10 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 - **17 nov 2026:** pagos migrados a Mercado Pago. Funciones `create-order`, `confirm-order` y `mp-webhook`
   desplegadas (comparten `supabase/functions/_shared/mp.ts`). `wompi-webhook` sigue desplegada pero ya no se usa.
   Comisiones nuevas en `supabase/migrations/20261117040000_mercado_pago_fees.sql`.
-- Login por celular activo con número de prueba (OTP fijo). El dueño ya es admin.
+- **Login por correo** (migración `20261117050000_email_login.sql`): boletas en `tickets.holder_email`, `my_tickets()` busca
+  por `my_email()`, `transfer_ticket(p_code, p_email, p_name)`, la orden guarda `buyer_email`. Los correos se
+  mandan con SMTP propio configurado en Supabase (plantillas Magic Link y Confirm signup con `{{ .Token }}`).
+  Las columnas `holder_phone` / `buyer_phone` quedan sin uso. La cuenta vieja del dueño era por celular.
 - Evento `Throwback 2016-2018` creado, oculto, fecha provisional.
 - **Pendiente manual:** secreto `MP_ACCESS_TOKEN` en Supabase (primero el de prueba), probar una compra,
   confirmar la comisión real de Mercado Pago en su panel, proveedor de SMS real (Twilio) y publicar en producción.
@@ -36,18 +40,20 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 
 ## Contrato que el frontend espera (sacado de la demo)
 
+Nota: la demo ya usa correo (cualquier correo + código 123456).
+
 Tablas que se leen/escriben directo: `profiles` (id, name, is_admin), `events`, `ticket_types`, `orders`, `tickets`.
 
 Campos de `events`: id, owner_id, slug, name, starts_at, venue, address, city, description, cover_url,
 palette, is_private, access_code, published, allow_transfers, fee_mode ('buyer' | 'organizer'), spotify_url, created_at.
 `ticket_types`: id, event_id, name, price, quantity, sold, sales_end, unlock_after (id de otra etapa: se abre cuando esa se agota).
 `orders`: id, token, reference (`CUP-AAMMDD-XXXXXXXX`), event_id, buyer_name, buyer_phone, items, qty, subtotal, fee_mode, total, status ('pending' | 'paid' | 'failed').
-`tickets`: id, code (`CUP-XXXX-XXXX`), order_id, event_id, ticket_type_id, type_name, holder_name, holder_phone, transfers, price, checked_in_at.
+`tickets`: id, code (`CUP-XXXX-XXXX`), order_id, event_id, ticket_type_id, type_name, holder_name, holder_email, transfers, price, checked_in_at.
 
 RPCs (`sb.rpc`) — ver implementación de referencia en `demo/index.html`, objeto `RPC`:
 `list_public_events`, `get_event(p_slug,p_code)`, `find_private_event(p_code)`, `calc_fees(p_subtotal,p_mode)`,
 `get_order(p_order,p_token)`, `event_summary(p_event)`, `check_in(p_event,p_code)`, `my_tickets()`,
-`transfer_ticket(p_code,p_phone,p_name)` (rota el código de la boleta), `platform_summary()` (solo admin).
+`transfer_ticket(p_code,p_email,p_name)` (rota el código de la boleta), `platform_summary()` (solo admin).
 
 Edge Functions (Mercado Pago):
 - `create-order` — body `{slug, code, items:[{ticket_type_id,qty}], name}`. Valida sesión, evento, código privado,
@@ -68,4 +74,4 @@ La comisión de Mercado Pago es una estimación (3,29 % + $800 + IVA 19 %): conf
   variables de entorno de las Edge Functions. Nunca en `web/`.
 - Activar RLS en todas las tablas. Las RPCs que exponen datos deben ser `security definer` con validaciones.
 - Probar primero con las credenciales de **prueba** de Mercado Pago antes de las de producción.
-- Celulares colombianos se normalizan a `57XXXXXXXXXX`.
+- Los correos se guardan en minúsculas y sin espacios (`norm_email`).
