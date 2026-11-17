@@ -36,6 +36,10 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 - Evento `Throwback 2016-2018` creado, oculto, fecha provisional.
 - **Pendiente manual:** secreto `MP_ACCESS_TOKEN` en Supabase (primero el de prueba), probar una compra,
   confirmar la comisión real de Mercado Pago en su panel, proveedor de SMS real (Twilio) y publicar en producción.
+- **Apple Wallet (17 nov 2026):** función `wallet-pass` (GET `?code=`, `verify_jwt=false`, arma el .pkpass con
+  `_shared/pkpass.ts`) y botón en "Boletas" detrás de `APPLE_WALLET` en `web/config.js`. Falta: aprobación de la cuenta
+  Apple Developer del dueño (pagada el 17 nov), crear el Pass Type ID + certificado, guardar los secretos
+  `APPLE_PASS_TYPE_ID`, `APPLE_TEAM_ID`, `APPLE_PASS_CERT`, `APPLE_PASS_KEY`, desplegar la función y poner `APPLE_WALLET: true`.
 - Stock: una orden pendiente aparta sus boletas 30 min (`reserved_qty`); el webhook es la fuente de verdad.
 
 ## Contrato que el frontend espera (sacado de la demo)
