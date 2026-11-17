@@ -76,5 +76,13 @@ export async function syncOrderPayment(admin: SupabaseClient, order: Order, paym
     p_amount_in_cents: Math.round(Number(p.transaction_amount) * 100),
   });
   if (error) { console.error(error); return { ok: false, http: 500, error: "No se pudo confirmar." }; }
+  // Cobrado en la cuenta de Cupo: guarda la comisión REAL de Mercado Pago (lo que no llegó neto),
+  // así el saldo del organizador es exacto.
+  const net = Number(p?.transaction_details?.net_received_amount);
+  if (p.status === "approved" && !order.mp_seller_id && Number.isFinite(net) && net > 0) {
+    const fee = Math.max(0, Math.round(Number(p.transaction_amount) - net));
+    const { error: feeErr } = await admin.from("orders").update({ gateway_fee: fee }).eq("id", order.id);
+    if (feeErr) console.error("No se pudo guardar la comisión real", feeErr);
+  }
   return { ok: true, http: 200, status: p.status, result: data };
 }

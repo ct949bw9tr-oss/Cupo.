@@ -160,7 +160,7 @@ nav.tabs a:hover{color:var(--txt)}
 
 /* Estadísticas */
 .stat{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}.stat .card{margin:0;padding:16px}
-.stat small{color:var(--mut);font-size:12px;font-weight:500}.stat .n{font-family:var(--fd);font-stretch:108%;font-size:24px;font-weight:800;margin-top:4px;letter-spacing:-.025em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.stat small{color:var(--mut);font-size:12px;font-weight:500}.stat .n{font-family:var(--fd);font-stretch:108%;font-size:24px;font-weight:800;margin-top:4px;letter-spacing:-.025em;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:clamp(18px,5.6vw,24px)}
 .bar{height:6px;border-radius:9px;background:var(--card3);margin-top:12px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:9px;background:var(--acc)}
 
@@ -807,19 +807,11 @@ async function vPanel(){
   loading();
   const { data: evs, error } = await sb.from('events').select('*, ticket_types(sold,quantity,price)').eq('owner_id', session.user.id).order('starts_at');
   if (error) throw error;
-  const { data: mp } = await sb.rpc('my_mp_status');
-  const mpCard = mp?.connected
-    ? `<div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Cobros <span class="badge on">Mercado Pago conectado</span></h3>
-        <p class="small muted" style="margin-top:6px">La plata de tus ventas te cae directo en tu Mercado Pago. Mercado Pago descuenta su comisión y Cupo su cargo por servicio; lo demás es tuyo y lo retiras desde Mercado Pago.</p>
-        <button class="btn alt sm" style="margin-top:10px" onclick="connectMP()">Volver a conectar</button></div>`
-    : mp?.is_admin
-    ? `<div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Cobros</h3>
-        <p class="small muted" style="margin-top:6px">Eres administrador: tus eventos cobran con la cuenta de Mercado Pago de Cupo.</p></div>`
-    : `<div class="card" style="border-color:var(--acc)"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Conecta tu Mercado Pago</h3>
-        <p class="small muted" style="margin-top:6px">Para vender boletas conecta tu cuenta de Mercado Pago. La plata de cada venta te cae directo ahí: Mercado Pago descuenta su comisión y Cupo su cargo por servicio.</p>
-        <button class="btn" style="margin-top:12px" id="mpBtn" onclick="connectMP()">Conectar Mercado Pago</button></div>`;
+  const { data: bal } = await sb.rpc('host_balance');
+  BAL = bal || {};
+  const balCard = (evs.length || BAL.earned || (BAL.payouts||[]).length) ? balanceCard(BAL) : '';
   app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>${esc(profile.name)}</h1><p>${esc(myEmail())}</p></div>
-    ${mpCard}
+    ${balCard}
     <div class="sec"><div class="row"><h3 style="margin:0">Mis eventos</h3><a class="btn sm" style="flex:none" href="#/nuevo">+ Crear evento</a></div>
     ${evs.length ? evs.map(e=>{const s=e.ticket_types.reduce((a,t)=>a+t.sold,0), q=e.ticket_types.reduce((a,t)=>a+t.quantity,0);
       return `<a class="ev mini" href="#/evento/${e.id}" style="margin:14px 0">${poster(e)}
@@ -828,6 +820,68 @@ async function vPanel(){
     ${profile?.is_admin?`<a class="btn alt" href="#/admin" style="margin-top:10px">${icon('wallet')} Ganancias de la plataforma</a>`:''}
     <button class="btn alt" style="margin-top:10px" onclick="editName()">Cambiar mi nombre</button>
     <button class="btn alt" style="margin-top:10px" onclick="sb.auth.signOut()">Cerrar sesión</button>`;
+}
+/* ---------- Saldo y retiros del organizador ---------- */
+let BAL = {};
+const BANKS = ['Bancolombia','Nequi','Daviplata','Davivienda','Banco de Bogotá','BBVA','Banco de Occidente','Banco Popular','Banco AV Villas','Banco Caja Social','Scotiabank Colpatria','Itaú','Banco Agrario','Banco GNB Sudameris','Banco Falabella','Banco Pichincha','Bancoomeva','Banco Finandina','Banco Serfinanza','Lulo Bank','Nu Colombia','RappiPay','Movii','Otro'];
+const ACC_TYPES = { ahorros:'Ahorros', corriente:'Corriente', billetera:'Nequi / Daviplata' };
+const PAYOUT_ERR = { BAD_HOLDER:'Escribe el nombre del titular.', BAD_DOC:'Revisa el número de documento.', BAD_BANK:'Elige el banco.', BAD_TYPE:'Elige el tipo de cuenta.', BAD_NUMBER:'Revisa el número de cuenta.', NO_ACCOUNT:'Primero agrega tu cuenta de retiro.', PENDING_EXISTS:'Ya tienes un retiro en proceso.', MIN_AMOUNT:'El retiro mínimo es $10.000.' };
+const rpcErr = (error) => PAYOUT_ERR[error?.message] || error?.message || 'Algo salió mal';
+const accLabel = a => a ? `${esc(a.bank)} · ${ACC_TYPES[a.account_type]||''} ····${esc(String(a.account_number).slice(-4))}` : '';
+function balanceCard(b){
+  const acc = b.account, pend = (b.payouts||[]).find(x=>x.status==='requested');
+  const locked = Math.max(0, (b.earned||0) - (b.earned_ended||0));
+  const can = acc && !pend && (b.available||0) >= 10000;
+  const why = pend ? `Tienes un retiro de ${COP(pend.amount)} en proceso.` : !acc ? 'Agrega tu cuenta para poder retirar.' : (b.available||0) < 10000 ? (locked ? 'El saldo se libera 1 día después de cada evento.' : 'El retiro mínimo es $10.000.') : 'Te transferimos en 1 a 3 días hábiles.';
+  const st = { requested:['warn','En proceso'], paid:['on','Pagado'], rejected:['','Rechazado'] };
+  return `<div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Tu saldo</h3>
+    <div class="stat" style="margin-top:12px">
+      <div class="card" style="background:var(--card2)"><small>Disponible para retirar</small><div class="n" style="color:var(--ok)">${COP(b.available)}</div></div>
+      <div class="card" style="background:var(--card2)"><small>Se libera al terminar el evento</small><div class="n">${COP(locked)}</div></div>
+    </div>
+    <div class="list" style="margin-top:8px">
+      <div class="it"><span class="muted">Ventas netas (ya sin comisión de Mercado Pago ni cargo de Cupo)</span><b>${COP(b.earned)}</b></div>
+      <div class="it"><span class="muted">Retirado</span><b>${COP(b.paid)}</b></div>
+      ${b.requested?`<div class="it"><span class="muted">En proceso</span><b>${COP(b.requested)}</b></div>`:''}
+      <div class="it"><span class="muted">Cuenta de retiro</span><span style="text-align:right">${acc?accLabel(acc):'<span class="muted">Sin agregar</span>'}<br><a href="#" class="small" onclick="openPayoutAccount();return false">${acc?'Cambiar':'Agregar cuenta'}</a></span></div>
+    </div>
+    <button class="btn" style="margin-top:12px" ${can?'':'disabled'} onclick="askPayout()">Retirar ${COP(b.available)}</button>
+    <p class="note" style="text-align:center">${why}</p>
+    ${(b.payouts||[]).length?`<div class="list" style="margin-top:6px">${b.payouts.map(x=>`<div class="it"><span>${COP(x.amount)}<br><span class="small muted">${new Date(x.requested_at).toLocaleDateString('es-CO',{timeZone:TZ,day:'numeric',month:'short'})}${x.note?' · '+esc(x.note):''}</span></span><span class="badge ${st[x.status][0]}">${st[x.status][1]}</span></div>`).join('')}</div>`:''}
+  </div>`;
+}
+function openPayoutAccount(){
+  const a = BAL.account || {};
+  const opt = (v,l,cur) => `<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(l)}</option>`;
+  modal(`<h2>Cuenta de retiro</h2><p class="note">Aquí te transferimos lo que vendas. Debe estar a tu nombre.</p>
+  <form onsubmit="event.preventDefault();savePayoutAccount()">
+    <label for="pa_h">Titular de la cuenta</label><input id="pa_h" value="${esc(a.holder_name||profile.name||'')}" required minlength="3">
+    <div class="row"><div style="flex:.6"><label for="pa_dt">Documento</label><select id="pa_dt">${[['CC','C.C.'],['CE','C.E.'],['NIT','NIT'],['PP','Pasaporte']].map(([v,l])=>opt(v,l,a.doc_type||'CC')).join('')}</select></div>
+    <div><label for="pa_dn">Número</label><input id="pa_dn" inputmode="numeric" value="${esc(a.doc_number||'')}" required></div></div>
+    <label for="pa_b">Banco</label><select id="pa_b">${BANKS.map(b=>opt(b,b,a.bank||'Bancolombia')).join('')}</select>
+    <label for="pa_t">Tipo de cuenta</label><select id="pa_t">${Object.entries(ACC_TYPES).map(([v,l])=>opt(v,l,a.account_type||'ahorros')).join('')}</select>
+    <label for="pa_n">Número de cuenta (en Nequi o Daviplata, tu celular)</label><input id="pa_n" inputmode="numeric" value="${esc(a.account_number||'')}" required>
+    <button class="btn" id="paBtn" style="margin-top:16px">Guardar cuenta</button></form>`);
+}
+async function savePayoutAccount(){
+  $('paBtn').disabled = true;
+  const { error } = await sb.rpc('save_payout_account', { p_holder:$('pa_h').value, p_doc_type:$('pa_dt').value, p_doc_number:$('pa_dn').value,
+    p_bank:$('pa_b').value, p_account_type:$('pa_t').value, p_account_number:$('pa_n').value });
+  if (error) { toast(rpcErr(error)); $('paBtn').disabled = false; return; }
+  closeModal(); toast('Cuenta guardada ✓'); route();
+}
+function askPayout(){
+  modal(`<h2>¿Retirar ${COP(BAL.available)}?</h2>
+  <div class="card" style="margin-top:14px"><div class="small muted">Te transferimos a</div><b>${accLabel(BAL.account)}</b><div class="small muted" style="margin-top:4px">${esc(BAL.account?.holder_name||'')}</div></div>
+  <p class="note">Te transferimos en 1 a 3 días hábiles. Verás el estado aquí en tu perfil.</p>
+  <button class="btn" id="poBtn" style="margin-top:14px" onclick="doPayout()">Sí, retirar</button>
+  <button class="btn alt" style="margin-top:10px" onclick="closeModal()">Cancelar</button>`);
+}
+async function doPayout(){
+  $('poBtn').disabled = true;
+  const { data, error } = await sb.rpc('request_payout');
+  if (error) { toast(rpcErr(error)); $('poBtn').disabled = false; return; }
+  closeModal(); toast('Retiro solicitado: ' + COP(data.amount)); route();
 }
 async function connectMP(){
   if (CFG.DEMO) return toast('En la vista de prueba no se conecta Mercado Pago.');
@@ -950,7 +1004,7 @@ function drawEdit(){
     <div class="row"><button class="btn alt sm" onclick="addStage()">+ Siguiente etapa</button><button class="btn alt sm" onclick="syncEd();ED.tiers.push({name:'VIP',price:150000,quantity:50,sold:0,unlock_idx:-1,end_date:''});drawEdit()">+ Otro tipo (VIP, mesa…)</button></div>
     <label>¿Quién paga el cargo por servicio?</label>
     <div class="seg"><button class="${e.fee_mode==='buyer'?'on':''}" onclick="syncEd();ED.fee_mode='buyer';drawEdit()">El comprador</button><button class="${e.fee_mode==='organizer'?'on':''}" onclick="syncEd();ED.fee_mode='organizer';drawEdit()">Yo (organizador)</button></div>
-    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (8%) encima del precio. Las ventas te caen directo en tu Mercado Pago, menos la comisión de Mercado Pago.':'El comprador paga el precio exacto; el cargo de Cupo (8%) y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
+    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (8%) encima del precio. Lo vendido, menos la comisión de Mercado Pago, va a tu saldo en Cupo y lo retiras a tu cuenta cuando termine el evento.':'El comprador paga el precio exacto; el cargo de Cupo (8%) y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
   </div>
   <button class="btn" id="saveBtn" onclick="saveEvent()">${e.id?'Guardar cambios':'Publicar evento'}</button>
   ${e.id?`<button class="btn alt" style="margin-top:10px" onclick="askDelete()">Eliminar evento</button>`:''}`;
@@ -1142,15 +1196,41 @@ async function doCheck(eventId, code){
 /* ================================================================
    ADMIN — ganancias de la plataforma
    ================================================================ */
+let PAYS = [];
+async function markPayout(i, status){
+  const x = PAYS[i]; if (!x) return;
+  const { error } = await sb.rpc('mark_payout', { p_id: x.id, p_status: status, p_note: $('pn_'+i)?.value || null });
+  if (error) return toast(error.message);
+  toast(status==='paid' ? 'Marcado como pagado ✓' : 'Retiro rechazado'); route();
+}
 async function vAdmin(){
   if (!profile?.is_admin) { location.hash='#/panel'; return; }
   loading();
-  const { data, error } = await sb.rpc('platform_summary'); if (error) throw error;
+  const [{ data, error }, { data: pays }] = await Promise.all([sb.rpc('platform_summary'), sb.rpc('admin_payouts')]);
+  if (error) throw error;
+  PAYS = pays || [];
+  const pend = PAYS.filter(x=>x.status==='requested');
   const rows = data || []; const tot = rows.reduce((a,r)=>a+Number(r.platform_fee),0), owed = rows.reduce((a,r)=>a+Number(r.owed_to_organizer),0);
   app().innerHTML = `<a href="#/panel" class="back">${icon('back')} Perfil</a>
-  <div class="hero"><h1>Plataforma</h1><p>Lo que ganas con el cargo por servicio (8%) y lo que debes pagarle a cada organizador.</p></div>
+  <div class="hero"><h1>Plataforma</h1><p>Lo que ganas con el cargo por servicio (8%) y los retiros que debes transferir.</p></div>
   <div class="stat" style="margin-top:12px"><div class="card"><small>Tu ganancia (cargo por servicio)</small><div class="n" style="color:var(--sun)">${COP(tot)}</div></div>
-  <div class="card"><small>Por pagar a organizadores</small><div class="n">${COP(owed)}</div></div></div>
+  <div class="card"><small>Retiros por pagar</small><div class="n">${COP(pend.reduce((a,x)=>a+x.amount,0))}</div></div></div>
+  <div class="sec"><h3>Retiros pendientes (${pend.length})</h3>
+  ${pend.length ? pend.map(x=>{ const a=x.account||{}; const i=PAYS.indexOf(x); return `<div class="card">
+    <div class="row"><b style="font-size:20px">${COP(x.amount)}</b><span class="small muted" style="text-align:right">${new Date(x.requested_at).toLocaleString('es-CO',{timeZone:TZ,day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})}</span></div>
+    <div class="small muted" style="margin-top:4px;overflow-wrap:anywhere">${esc(x.host)} · ${esc(x.email)}</div>
+    <div class="list" style="margin-top:8px">
+      <div class="it"><span class="muted">Titular</span><b>${esc(a.holder_name)}</b></div>
+      <div class="it"><span class="muted">Documento</span><b>${esc(a.doc_type)} ${esc(a.doc_number)}</b></div>
+      <div class="it"><span class="muted">Banco</span><b>${esc(a.bank)} · ${ACC_TYPES[a.account_type]||''}</b></div>
+      <div class="it"><span class="muted">Número</span><span><b class="code">${esc(a.account_number)}</b> <a href="#" class="small" onclick="copy('${esc(a.account_number)}');return false">Copiar</a></span></div>
+    </div>
+    <label for="pn_${i}">Nota (por ejemplo, número de la transferencia)</label><input id="pn_${i}" placeholder="Opcional">
+    <div class="row" style="margin-top:10px"><button class="btn" onclick="markPayout(${i},'paid')">${icon('check')} Ya le transferí</button><button class="btn alt" style="flex:.6" onclick="markPayout(${i},'rejected')">Rechazar</button></div>
+  </div>`}).join('') : '<p class="muted small">No hay retiros pendientes.</p>'}
+  ${PAYS.filter(x=>x.status!=='requested').length?`<div class="card list">${PAYS.filter(x=>x.status!=='requested').map(x=>`<div class="it"><span>${esc(x.host)}<br><span class="small muted">${x.paid_at?new Date(x.paid_at).toLocaleDateString('es-CO',{timeZone:TZ,day:'numeric',month:'short'}):''}${x.note?' · '+esc(x.note):''}</span></span><span style="text-align:right">${COP(x.amount)}<br><span class="badge ${x.status==='paid'?'on':''}">${x.status==='paid'?'Pagado':'Rechazado'}</span></span></div>`).join('')}</div>`:''}
+  </div>
+  <div class="sec"><h3>Por evento</h3></div>
   <div class="card tablewrap"><table><tr><th>Evento</th><th>Boletas</th><th>Cargo Cupo</th><th>Al organizador</th></tr>
   ${rows.map(r=>`<tr><td>${esc(r.event)}<br><span class="muted">${esc(r.owner||'')}</span></td><td>${r.tickets}</td><td>${COP(r.platform_fee)}</td><td>${COP(r.owed_to_organizer)}</td></tr>`).join('')}</table></div>`;
 }

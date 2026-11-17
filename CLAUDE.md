@@ -55,6 +55,14 @@ RPCs (`sb.rpc`) — ver implementación de referencia en `demo/index.html`, obje
 `get_order(p_order,p_token)`, `event_summary(p_event)`, `check_in(p_event,p_code)`, `my_tickets()`,
 `transfer_ticket(p_code,p_email,p_name)` (rota el código de la boleta), `platform_summary()` (solo admin).
 
+Flujo de plata (migración `20261117080000_host_balance_payouts.sql`):
+- El cliente paga con Mercado Pago en la **cuenta de Cupo** (`MP_ACCESS_TOKEN`). Lo vendido, menos la comisión REAL de
+  Mercado Pago (se guarda en `orders.gateway_fee` al confirmar el pago) y menos el cargo de Cupo, va al **saldo del
+  organizador** (`host_balance()`). El saldo de un evento se puede retirar 1 día después de que empieza.
+- El organizador guarda su cuenta (`save_payout_account`) y pide el retiro (`request_payout`, mínimo $10.000, uno a la vez).
+- Un admin ve los retiros en `#/admin` (`admin_payouts`), le transfiere **a mano** y lo marca (`mark_payout` paid/rejected).
+- Opcional (código listo, sin botón en la app): split de pagos si el organizador conecta su propio Mercado Pago.
+
 Edge Functions (Mercado Pago, split de pagos — migración `20261117070000_mp_marketplace.sql`):
 - Cada organizador conecta su Mercado Pago (OAuth): `mp-connect` (devuelve la URL de autorización, guarda un `state`
   en `mp_oauth_states`) y `mp-oauth-callback` (cambia el code por tokens y los guarda en `mp_accounts`; vuelve a

@@ -1,7 +1,8 @@
 // Crea una orden pendiente y una "preferencia" de pago en Mercado Pago (Checkout Pro).
-// Split de pagos: si el organizador conectó su Mercado Pago, la preferencia se crea con SU token,
-// la plata le cae a él y Cupo cobra su cargo por servicio como marketplace_fee.
-// Los eventos de un admin de Cupo sin cuenta conectada se cobran con la cuenta de Cupo (MP_ACCESS_TOKEN).
+// Normalmente se cobra con la cuenta de Cupo (MP_ACCESS_TOKEN): lo vendido suma al saldo del organizador
+// en Cupo y él lo retira por transferencia (host_balance / request_payout).
+// Si el organizador conectó su propio Mercado Pago (split), se cobra con SU token y Cupo recibe
+// su cargo como marketplace_fee.
 import { adminClient, MP_API, sellerToken } from "../_shared/mp.ts";
 
 const cors = {
@@ -26,16 +27,11 @@ Deno.serve(async (req) => {
   const slug = String(body?.slug ?? "");
 
   // ¿Con qué cuenta de Mercado Pago se cobra este evento?
-  const { data: ev } = await admin.from("events").select("id, name, owner_id, profiles(is_admin)").eq("slug", slug).maybeSingle();
+  const { data: ev } = await admin.from("events").select("id, name, owner_id").eq("slug", slug).maybeSingle();
   if (!ev) return json({ error: "Este evento no existe." });
   let mpToken = await sellerToken(admin, ev.owner_id);
   const split = !!mpToken;
-  if (!mpToken) {
-    if (!(ev as any).profiles?.is_admin) {
-      return json({ error: "El organizador todavía no ha conectado su Mercado Pago. Intenta más tarde." });
-    }
-    mpToken = Deno.env.get("MP_ACCESS_TOKEN") ?? null;
-  }
+  if (!mpToken) mpToken = Deno.env.get("MP_ACCESS_TOKEN") ?? null;
   if (!mpToken) return json({ error: "Pagos sin configurar todavía." }, 500);
 
   const { data, error } = await admin.rpc("create_order_internal", {
