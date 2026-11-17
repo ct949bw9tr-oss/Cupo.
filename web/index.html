@@ -736,7 +736,7 @@ async function vOrder(id, k, txId){
       <button class="btn" style="margin-top:20px" onclick="location.reload()">Actualizar</button>`; return;
   }
   app().innerHTML = `<div class="hero c">${orb('check','ok')}<h1>¡Estás dentro!</h1>
-    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu número.</p></div>
+    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu cuenta de ${APP}.</p></div>
     <a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
     ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}
     <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;

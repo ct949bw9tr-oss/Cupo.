@@ -92,7 +92,7 @@ const RPC = {
 };
 
 function createOrder(b){
-  if(!ME) return { error:'Entra con tu celular para comprar.' };
+  if(!ME) return { error:'Entra con tu correo para comprar.' };
   const e=db.events.find(x=>x.slug===b.slug); if(!e) return { error:'Este evento no existe.' };
   if(e.is_private && (b.code||'').toUpperCase()!==e.access_code) return { error:'Código no válido.' };
   if((b.name||'').trim().length<3) return { error:'Escribe tu nombre completo.' };
@@ -904,7 +904,7 @@ async function vOrder(id, k, txId){
       <button class="btn" style="margin-top:20px" onclick="location.reload()">Actualizar</button>`; return;
   }
   app().innerHTML = `<div class="hero c">${orb('check','ok')}<h1>¡Estás dentro!</h1>
-    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu número.</p></div>
+    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu cuenta de ${APP}.</p></div>
     <a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
     ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}
     <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;
