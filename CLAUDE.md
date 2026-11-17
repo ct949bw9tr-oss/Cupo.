@@ -14,7 +14,8 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 - **Frontend:** un solo archivo `web/index.html` (HTML + CSS + JS sin framework, mobile-first, rutas con hash `#/...`).
   Lee la configuración de `web/config.js` (copiar de `config.example.js`; está en .gitignore).
 - **Backend:** Supabase (Postgres + Auth por OTP al celular + Storage para flyers + Edge Functions).
-- **Pagos:** Wompi (Colombia) con el Widget Checkout (`https://checkout.wompi.co/widget.js`). Moneda COP.
+- **Pagos:** Mercado Pago Checkout Pro (redirección a la página de pago de Mercado Pago). Moneda COP.
+  Se cambió desde Wompi el 17 nov 2026 por problemas con la cuenta de Wompi.
 - **Hosting sugerido:** Vercel (sitio estático desde `web/`).
 
 ## Estado actual (16 nov 2026)
@@ -24,9 +25,13 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 - La tabla `orders` vieja de un intento anterior quedó en el esquema `archive` (vacía).
 - `web/config.js` ya apunta a ese proyecto.
 - `demo/index.html` = vista de prueba original con todo simulado (OTP `123456`). Referencia de comportamiento.
-- **Pendiente manual:** secretos de Wompi en Supabase (`WOMPI_PUBLIC_KEY`, `WOMPI_INTEGRITY_SECRET`,
-  `WOMPI_EVENTS_SECRET`), activar login por celular (proveedor SMS), URL de eventos de Wompi,
-  marcar al dueño como admin, publicar `web/` (Vercel) y probar una compra en sandbox.
+- **17 nov 2026:** pagos migrados a Mercado Pago. Funciones `create-order`, `confirm-order` y `mp-webhook`
+  desplegadas (comparten `supabase/functions/_shared/mp.ts`). `wompi-webhook` sigue desplegada pero ya no se usa.
+  Comisiones nuevas en `supabase/migrations/20261117040000_mercado_pago_fees.sql`.
+- Login por celular activo con número de prueba (OTP fijo). El dueño ya es admin.
+- Evento `Throwback 2016-2018` creado, oculto, fecha provisional.
+- **Pendiente manual:** secreto `MP_ACCESS_TOKEN` en Supabase (primero el de prueba), probar una compra,
+  confirmar la comisión real de Mercado Pago en su panel, proveedor de SMS real (Twilio) y publicar en producción.
 - Stock: una orden pendiente aparta sus boletas 30 min (`reserved_qty`); el webhook es la fuente de verdad.
 
 ## Contrato que el frontend espera (sacado de la demo)
@@ -44,22 +49,23 @@ RPCs (`sb.rpc`) — ver implementación de referencia en `demo/index.html`, obje
 `get_order(p_order,p_token)`, `event_summary(p_event)`, `check_in(p_event,p_code)`, `my_tickets()`,
 `transfer_ticket(p_code,p_phone,p_name)` (rota el código de la boleta), `platform_summary()` (solo admin).
 
-Edge Functions:
+Edge Functions (Mercado Pago):
 - `create-order` — body `{slug, code, items:[{ticket_type_id,qty}], name}`. Valida sesión, evento, código privado,
-  disponibilidad y etapas; crea la orden `pending`; calcula la **firma de integridad de Wompi en el servidor**
-  (SHA-256 de `reference + amountInCents + currency + secreto_integridad`). Responde
-  `{orderId, token, reference, amountInCents, currency, signature, publicKey, redirectUrl}` o `{error}`.
-- `confirm-order` — body `{transactionId}`. Consulta la transacción en la API de Wompi y marca la orden.
-- **Falta:** un webhook de eventos de Wompi (`transaction.updated`) que verifique el checksum y emita las boletas.
-  El webhook debe ser la fuente de verdad; `confirm-order` es solo un atajo para la pantalla de confirmación.
-  Emitir boletas debe ser idempotente (no duplicar si llegan dos avisos).
+  disponibilidad y etapas; crea la orden `pending` y una preferencia de Checkout Pro (vence a los 30 min, sin efectivo).
+  Responde `{orderId, token, reference, checkoutUrl}` o `{error}`. El navegador redirige a `checkoutUrl`.
+- Mercado Pago devuelve a `/?o=<orden>&k=<token>&payment_id=...`; el frontend llama `confirm-order` con `{paymentId}`.
+- `mp-webhook` — aviso `payment` de Mercado Pago (se manda vía `notification_url` de cada preferencia). Es la fuente
+  de verdad. Solo toma el id del pago y lo consulta en la API de Mercado Pago con `MP_ACCESS_TOKEN`; luego
+  `finalize_order` (idempotente). Las columnas `wompi_tx_id` / `wompi_status` guardan el id y estado del pago de Mercado Pago.
 
-Comisiones (función `fees` en la demo): Cupo 2 % del subtotal; Wompi 2,65 % + $700 COP, más IVA 19 % sobre la comisión de Wompi.
-Si `fee_mode = 'buyer'`, el comprador paga todo encima del precio; si es `'organizer'`, se descuenta del organizador.
+Comisiones (`calc_fees` en SQL y `fees` en la demo): con `fee_mode = 'buyer'` el comprador paga precio + 2 % de Cupo
+(cargo por servicio, le llega completo a Cupo) y la comisión de Mercado Pago se descuenta del precio de la boleta
+(del organizador). Con `'organizer'` el comprador paga el precio exacto y ambas se descuentan del organizador.
+La comisión de Mercado Pago es una estimación (3,29 % + $800 + IVA 19 %): confirmarla en el panel de Mercado Pago.
 
 ## Reglas
-- Secretos (service_role, llave privada de Wompi, secreto de integridad, secreto de eventos) solo en
+- Secretos (service_role, `MP_ACCESS_TOKEN` de Mercado Pago) solo en
   variables de entorno de las Edge Functions. Nunca en `web/`.
 - Activar RLS en todas las tablas. Las RPCs que exponen datos deben ser `security definer` con validaciones.
-- Probar primero con las llaves de **sandbox** de Wompi (`pub_test_...`) antes de producción.
+- Probar primero con las credenciales de **prueba** de Mercado Pago antes de las de producción.
 - Celulares colombianos se normalizan a `57XXXXXXXXXX`.

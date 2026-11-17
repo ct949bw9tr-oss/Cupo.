@@ -11,7 +11,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,600..900&family=Inter+Tight:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://checkout.wompi.co/widget.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 /* Cupo — noche barranquillera: negro profundo, acento lima de la marca, tipografía ancha de cartel. */
@@ -451,7 +450,7 @@ async function route(){
   if (stopScanner) { try{ await stopScanner(); }catch(e){} stopScanner = null; }
   closeModal(); setBackdrop(null); setCTA(null);
   const qs = new URLSearchParams(location.search);
-  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('id')); }
+  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id')); }
   const [a,b,c] = location.hash.replace(/^#\/?/,'').split('/');
   app().classList.toggle('narrow', !['','e'].includes(a||''));
   renderTabs(a==='e'?'':(['flyer','editar','scan','evento','admin','login'].includes(a)?'panel':a||''));
@@ -640,7 +639,7 @@ function openTickets(){
       ${s.ok?`<div class="qty"><button onclick="setQty('${t.id}',-1)" aria-label="Quitar una ${esc(t.name)}">−</button><span id="q_${t.id}" aria-live="polite">${CART[t.id]||0}</span><button onclick="setQty('${t.id}',1)" aria-label="Agregar una ${esc(t.name)}">+</button></div>`:''}</div>`}).join('')}</div>
     <div class="sum" id="sum" style="margin-top:12px"></div>
     <button class="btn" id="buyBtn" style="margin-top:14px" onclick="startPayment()" disabled>Elige tus boletas</button>
-    <div class="secure">${icon('shield')} Pago seguro con Wompi · Nequi, PSE o tarjeta</div>
+    <div class="secure">${icon('shield')} Pago seguro con Mercado Pago · tarjeta o PSE</div>
     ${e.allow_transfers!==false?'<p class="note" style="text-align:center">Puedes pasarle boletas a tus amigos con su número de celular.</p>':''}`);
   updSum();
 }
@@ -686,7 +685,11 @@ async function startPayment(){
   if (msg) { toast(msg); btn.disabled=false; updSum(); return; }
   rememberOrder({ id: data.orderId, k: data.token, name: EV.name, at: EV.starts_at });
   closeModal();
-  if (typeof WidgetCheckout === 'undefined') { location.href = data.redirectUrl; return; }
+  if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
+    if (!data.checkoutUrl) { toast('No se pudo iniciar el pago. Intenta otra vez.'); return; }
+    location.href = data.checkoutUrl; return;   // página de pago de Mercado Pago
+  }
+  // Solo en el demo: pago simulado
   const ph = myPhone();
   const checkout = new WidgetCheckout({
     currency: data.currency, amountInCents: data.amountInCents, reference: data.reference,
@@ -704,7 +707,7 @@ async function startPayment(){
    ================================================================ */
 async function vOrder(id, k, txId){
   app().innerHTML = '<div class="spin" role="status"></div><p class="muted" style="text-align:center">Confirmando tu pago…</p>';
-  if (txId) { try { await sb.functions.invoke('confirm-order', { body: { transactionId: txId } }); } catch(e){} }
+  if (txId) { try { await sb.functions.invoke('confirm-order', { body: { paymentId: txId } }); } catch(e){} }
   let o = null;
   for (let i=0;i<20;i++){
     const { data } = await sb.rpc('get_order', { p_order: id, p_token: k });
@@ -922,7 +925,7 @@ function drawEdit(){
     <div class="row"><button class="btn alt sm" onclick="addStage()">+ Siguiente etapa</button><button class="btn alt sm" onclick="syncEd();ED.tiers.push({name:'VIP',price:150000,quantity:50,sold:0,unlock_idx:-1,end_date:''});drawEdit()">+ Otro tipo (VIP, mesa…)</button></div>
     <label>¿Quién paga el cargo por servicio?</label>
     <div class="seg"><button class="${e.fee_mode==='buyer'?'on':''}" onclick="syncEd();ED.fee_mode='buyer';drawEdit()">El comprador</button><button class="${e.fee_mode==='organizer'?'on':''}" onclick="syncEd();ED.fee_mode='organizer';drawEdit()">Yo (organizador)</button></div>
-    <p class="note">${e.fee_mode==='buyer'?'Se suma al precio en el pago. Tú recibes el 100% del precio de cada boleta.':'El comprador paga el precio exacto; el 2% de la app y la comisión de Wompi se descuentan de lo que recibes.'}</p>
+    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (2%) encima del precio. La comisión de Mercado Pago se descuenta del precio de cada boleta.':'El comprador paga el precio exacto; el 2% de Cupo y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
   </div>
   <button class="btn" id="saveBtn" onclick="saveEvent()">${e.id?'Guardar cambios':'Publicar evento'}</button>
   ${e.id?`<button class="btn alt" style="margin-top:10px" onclick="askDelete()">Eliminar evento</button>`:''}`;

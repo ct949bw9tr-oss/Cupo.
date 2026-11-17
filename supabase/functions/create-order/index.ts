@@ -1,5 +1,5 @@
-// Crea una orden pendiente y devuelve lo que necesita el Widget de Wompi.
-// La firma de integridad se calcula aquí: el secreto nunca llega al navegador.
+// Crea una orden pendiente y una "preferencia" de pago en Mercado Pago (Checkout Pro).
+// El Access Token de Mercado Pago solo vive aquí (variable MP_ACCESS_TOKEN): nunca llega al navegador.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const cors = {
@@ -10,20 +10,15 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-async function sha256(text: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
 
-  const publicKey = Deno.env.get("WOMPI_PUBLIC_KEY");
-  const integrity = Deno.env.get("WOMPI_INTEGRITY_SECRET");
-  if (!publicKey || !integrity) return json({ error: "Pagos sin configurar todavía." }, 500);
+  const mpToken = Deno.env.get("MP_ACCESS_TOKEN");
+  if (!mpToken) return json({ error: "Pagos sin configurar todavía." }, 500);
 
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const admin = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
     auth: { persistSession: false },
   });
 
@@ -44,9 +39,51 @@ Deno.serve(async (req) => {
   if (error) { console.error(error); return json({ error: "No se pudo crear la orden." }, 500); }
   if (data?.error) return json({ error: data.error });
 
-  const signature = await sha256(`${data.reference}${data.amountInCents}${data.currency}${integrity}`);
-  const site = (Deno.env.get("SITE_URL") || req.headers.get("origin") || "").replace(/\/+$/, "");
-  const redirectUrl = `${site}/?o=${data.orderId}&k=${data.token}`;
+  const { data: ord } = await admin.from("orders").select("qty, events(name)").eq("id", data.orderId).single();
+  const evName = (ord as any)?.events?.name ?? "Cupo";
+  const qty = (ord as any)?.qty ?? 1;
 
-  return json({ ...data, signature, publicKey, redirectUrl });
+  const site = (Deno.env.get("SITE_URL") || req.headers.get("origin") || "").replace(/\/+$/, "");
+  const back = `${site}/?o=${data.orderId}&k=${data.token}`;
+
+  const preference = {
+    items: [{
+      id: data.reference,
+      title: `${qty} boleta${qty === 1 ? "" : "s"} · ${evName}`.slice(0, 250),
+      quantity: 1,
+      unit_price: Number(data.amountInCents) / 100,
+      currency_id: "COP",
+    }],
+    external_reference: data.reference,
+    back_urls: { success: back, pending: back, failure: back },
+    auto_return: "approved",
+    notification_url: `${supabaseUrl}/functions/v1/mp-webhook`,
+    statement_descriptor: "CUPO",
+    // La orden aparta las boletas 30 minutos: el link de pago vence al mismo tiempo.
+    expires: true,
+    expiration_date_to: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    // Sin pagos en efectivo (tardan días y la reserva dura 30 minutos).
+    payment_methods: { excluded_payment_types: [{ id: "ticket" }] },
+    metadata: { order_id: data.orderId },
+  };
+
+  const res = await fetch("https://api.mercadopago.com/checkout/preferences", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${mpToken}`,
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": data.reference,
+    },
+    body: JSON.stringify(preference),
+  });
+  if (!res.ok) {
+    console.error("Mercado Pago preference error", res.status, await res.text());
+    // Libera las boletas apartadas por esta orden
+    await admin.rpc("finalize_order", { p_reference: data.reference, p_tx_id: "", p_status: "ERROR", p_amount_in_cents: 0 });
+    return json({ error: "No se pudo iniciar el pago. Intenta otra vez." }, 502);
+  }
+  const pref = await res.json();
+  const checkoutUrl = mpToken.startsWith("TEST-") ? (pref.sandbox_init_point || pref.init_point) : pref.init_point;
+
+  return json({ orderId: data.orderId, token: data.token, reference: data.reference, checkoutUrl });
 });
