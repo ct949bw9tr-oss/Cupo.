@@ -61,15 +61,16 @@ Flujo de plata (migración `20261117080000_host_balance_payouts.sql`):
   organizador** (`host_balance()`). El saldo de un evento se puede retirar 1 día después de que empieza.
 - El organizador guarda su cuenta (`save_payout_account`) y pide el retiro (`request_payout`, mínimo $10.000, uno a la vez).
 - Un admin ve los retiros en `#/admin` (`admin_payouts`), le transfiere **a mano** y lo marca (`mark_payout` paid/rejected).
-- Opcional (código listo, sin botón en la app): split de pagos si el organizador conecta su propio Mercado Pago.
+- Si el organizador conecta su Mercado Pago (botón en su perfil, no aparece a admins), sus ventas se cobran con su
+  cuenta (split): le caen directo y Cupo recibe su cargo como `marketplace_fee`. Si no, van a su saldo en Cupo.
 
 Edge Functions (Mercado Pago, split de pagos — migración `20261117070000_mp_marketplace.sql`):
 - Cada organizador conecta su Mercado Pago (OAuth): `mp-connect` (devuelve la URL de autorización, guarda un `state`
   en `mp_oauth_states`) y `mp-oauth-callback` (cambia el code por tokens y los guarda en `mp_accounts`; vuelve a
   `/?mp=ok#/panel`). `mp_accounts` solo la lee el servidor. Los tokens se renuevan solos (`_shared/mp.ts`).
 - `create-order` — body `{slug, code, items:[{ticket_type_id,qty}], name}`. Si el dueño del evento conectó su cuenta,
-  crea la preferencia con SU token y `marketplace_fee = platform_fee` (el cargo de Cupo, limpio). Si el dueño es admin
-  sin cuenta conectada, cobra con `MP_ACCESS_TOKEN` (cuenta de Cupo). Si no es admin ni está conectado: error.
+  crea la preferencia con SU token y `marketplace_fee = platform_fee` (el cargo de Cupo, limpio). Si no está conectado,
+  cobra con `MP_ACCESS_TOKEN` (cuenta de Cupo) y la venta suma a su saldo en Cupo.
   Guarda `orders.mp_seller_id`. Responde `{orderId, token, reference, checkoutUrl}`; el navegador redirige ahí.
 - Mercado Pago devuelve a `/?o=<orden>&k=<token>&payment_id=...`; el frontend llama `confirm-order`
   con `{paymentId, orderId, token}`.

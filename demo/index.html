@@ -979,9 +979,17 @@ async function vPanel(){
   loading();
   const { data: evs, error } = await sb.from('events').select('*, ticket_types(sold,quantity,price)').eq('owner_id', session.user.id).order('starts_at');
   if (error) throw error;
-  const { data: bal } = await sb.rpc('host_balance');
+  const [{ data: bal }, { data: mp }] = await Promise.all([sb.rpc('host_balance'), sb.rpc('my_mp_status')]);
   BAL = bal || {};
-  const balCard = (evs.length || BAL.earned || (BAL.payouts||[]).length) ? balanceCard(BAL) : '';
+  const mpCard = mp?.connected
+    ? `<div class="card"><h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${icon('wallet')} Cobros <span class="badge on">Mercado Pago conectado</span></h3>
+        <p class="small muted" style="margin-top:6px">Las ventas de tus eventos te caen directo en tu Mercado Pago. Mercado Pago descuenta su comisión y Cupo su cargo por servicio; lo demás es tuyo y lo pasas a tu banco desde Mercado Pago.</p>
+        <button class="btn alt sm" style="margin-top:10px" onclick="connectMP()">Volver a conectar</button></div>`
+    : mp?.is_admin ? ''
+    : `<div class="card" style="border-color:var(--acc)"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Recibe tu plata al instante</h3>
+        <p class="small muted" style="margin-top:6px">Conecta tu Mercado Pago y cada venta te cae directo ahí, sin esperar retiros. Mercado Pago descuenta su comisión y Cupo su cargo por servicio. Si no lo conectas, tus ventas van a tu saldo en Cupo y lo retiras a tu banco cuando termine el evento.</p>
+        <button class="btn" style="margin-top:12px" id="mpBtn" onclick="connectMP()">Conectar Mercado Pago</button></div>`;
+  const balCard = mpCard + ((evs.length || BAL.earned || (BAL.payouts||[]).length) && !(mp?.connected && !BAL.earned && !(BAL.payouts||[]).length) ? balanceCard(BAL) : '');
   app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>${esc(profile.name)}</h1><p>${esc(myEmail())}</p></div>
     ${balCard}
     <div class="sec"><div class="row"><h3 style="margin:0">Mis eventos</h3><a class="btn sm" style="flex:none" href="#/nuevo">+ Crear evento</a></div>
