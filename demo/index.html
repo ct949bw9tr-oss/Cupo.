@@ -14,7 +14,7 @@
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 const code4 = () => Math.random().toString(36).slice(2,6).toUpperCase().padEnd(4,'X');
 let ME = null; const USERS = {}; let pendingEmail = null;   // correo → id
-const S = { pct: .02, gp: .0329, gf: 800, iva: .19 };
+const S = { pct: .08, gp: .0329, gf: 800, iva: .19 };
 const db = { events: [], ticket_types: [], orders: [], tickets: [], profiles: [{ id: 'demo-user', name: null, is_admin: true }] };
 let signedIn = false;
 const myEm = () => ME ? ME.email : '';
@@ -39,7 +39,7 @@ addEvent({ slug:'cumple', name:'Cumple de Sofi', starts_at:'2026-12-12T20:00:00-
     db.tickets.push({ id:uid(), code:'CUP-'+code4()+'-'+code4(), order_id:o.id, event_id:ev.id, ticket_type_id:tt.id, type_name:tt.name, holder_name:n, holder_email:n.split(' ')[0].toLowerCase()+'@gmail.com', transfers:0, price:tt.price, checked_in_at: i<2? new Date().toISOString():null, created_at:o.created_at }); });
 })();
 
-function fees(sub, mode){ const pf=Math.round(sub*S.pct); let t, g;
+function fees(sub, mode){ const pf=Math.ceil(sub*S.pct/100)*100; let t, g;
   t = mode==='buyer' ? sub+pf : sub;
   g=Math.ceil((t*S.gp+S.gf)*(1+S.iva)); return { platform_fee:pf, gateway_fee:g, total:t }; }
 function ttState(t){ if (t.sales_end && new Date()>new Date(t.sales_end)) return 'ended';
@@ -1083,7 +1083,7 @@ function drawEdit(){
     <div class="row"><button class="btn alt sm" onclick="addStage()">+ Siguiente etapa</button><button class="btn alt sm" onclick="syncEd();ED.tiers.push({name:'VIP',price:150000,quantity:50,sold:0,unlock_idx:-1,end_date:''});drawEdit()">+ Otro tipo (VIP, mesa…)</button></div>
     <label>¿Quién paga el cargo por servicio?</label>
     <div class="seg"><button class="${e.fee_mode==='buyer'?'on':''}" onclick="syncEd();ED.fee_mode='buyer';drawEdit()">El comprador</button><button class="${e.fee_mode==='organizer'?'on':''}" onclick="syncEd();ED.fee_mode='organizer';drawEdit()">Yo (organizador)</button></div>
-    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (2%) encima del precio. La comisión de Mercado Pago se descuenta del precio de cada boleta.':'El comprador paga el precio exacto; el 2% de Cupo y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
+    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (8%) encima del precio. La comisión de Mercado Pago se descuenta del precio de cada boleta.':'El comprador paga el precio exacto; el cargo de Cupo (8%) y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
   </div>
   <button class="btn" id="saveBtn" onclick="saveEvent()">${e.id?'Guardar cambios':'Publicar evento'}</button>
   ${e.id?`<button class="btn alt" style="margin-top:10px" onclick="askDelete()">Eliminar evento</button>`:''}`;
@@ -1281,10 +1281,10 @@ async function vAdmin(){
   const { data, error } = await sb.rpc('platform_summary'); if (error) throw error;
   const rows = data || []; const tot = rows.reduce((a,r)=>a+Number(r.platform_fee),0), owed = rows.reduce((a,r)=>a+Number(r.owed_to_organizer),0);
   app().innerHTML = `<a href="#/panel" class="back">${icon('back')} Perfil</a>
-  <div class="hero"><h1>Plataforma</h1><p>Lo que ganas con el 2% y lo que debes pagarle a cada organizador.</p></div>
-  <div class="stat" style="margin-top:12px"><div class="card"><small>Tu ganancia (2%)</small><div class="n" style="color:var(--sun)">${COP(tot)}</div></div>
+  <div class="hero"><h1>Plataforma</h1><p>Lo que ganas con el cargo por servicio (8%) y lo que debes pagarle a cada organizador.</p></div>
+  <div class="stat" style="margin-top:12px"><div class="card"><small>Tu ganancia (cargo por servicio)</small><div class="n" style="color:var(--sun)">${COP(tot)}</div></div>
   <div class="card"><small>Por pagar a organizadores</small><div class="n">${COP(owed)}</div></div></div>
-  <div class="card tablewrap"><table><tr><th>Evento</th><th>Boletas</th><th>2%</th><th>Al organizador</th></tr>
+  <div class="card tablewrap"><table><tr><th>Evento</th><th>Boletas</th><th>Cargo Cupo</th><th>Al organizador</th></tr>
   ${rows.map(r=>`<tr><td>${esc(r.event)}<br><span class="muted">${esc(r.owner||'')}</span></td><td>${r.tickets}</td><td>${COP(r.platform_fee)}</td><td>${COP(r.owed_to_organizer)}</td></tr>`).join('')}</table></div>`;
 }
 

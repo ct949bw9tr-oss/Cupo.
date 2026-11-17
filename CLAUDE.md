@@ -1,7 +1,7 @@
 # Cupo — contexto para Claude Code
 
 Cupo es una app de boletería estilo Posh para Barranquilla, Colombia. La gente crea eventos
-(públicos o privados), vende boletas y Cupo se queda con el 2 % de cada boleta.
+(públicos o privados), vende boletas y Cupo cobra un cargo por servicio del 8 % por boleta ($4.000 en una de $50.000).
 
 **Meta inmediata:** vender las boletas de la fiesta del dueño en Barranquilla en **diciembre de 2026**.
 La v1 solo necesita que esa venta funcione de punta a punta. La plataforma completa para otros
@@ -28,7 +28,7 @@ explica los pasos manuales (consolas de Supabase/Wompi/Vercel) de forma simple y
 - `demo/index.html` = vista de prueba original con todo simulado (OTP `123456`). Referencia de comportamiento.
 - **17 nov 2026:** pagos migrados a Mercado Pago. Funciones `create-order`, `confirm-order` y `mp-webhook`
   desplegadas (comparten `supabase/functions/_shared/mp.ts`). `wompi-webhook` sigue desplegada pero ya no se usa.
-  Comisiones nuevas en `supabase/migrations/20261117040000_mercado_pago_fees.sql`.
+  Comisiones en `20261117040000_mercado_pago_fees.sql` y cargo del 8 % en `20261117060000_service_fee_8.sql`.
 - **Login por correo** (migración `20261117050000_email_login.sql`): boletas en `tickets.holder_email`, `my_tickets()` busca
   por `my_email()`, `transfer_ticket(p_code, p_email, p_name)`, la orden guarda `buyer_email`. Los correos se
   mandan con SMTP propio configurado en Supabase (plantillas Magic Link y Confirm signup con `{{ .Token }}`).
@@ -64,7 +64,7 @@ Edge Functions (Mercado Pago):
   de verdad. Solo toma el id del pago y lo consulta en la API de Mercado Pago con `MP_ACCESS_TOKEN`; luego
   `finalize_order` (idempotente). Las columnas `wompi_tx_id` / `wompi_status` guardan el id y estado del pago de Mercado Pago.
 
-Comisiones (`calc_fees` en SQL y `fees` en la demo): con `fee_mode = 'buyer'` el comprador paga precio + 2 % de Cupo
+Comisiones (`calc_fees` en SQL y `fees` en la demo): con `fee_mode = 'buyer'` el comprador paga precio + 8 % de Cupo (redondeado hacia arriba a los $100)
 (cargo por servicio, le llega completo a Cupo) y la comisión de Mercado Pago se descuenta del precio de la boleta
 (del organizador). Con `'organizer'` el comprador paga el precio exacto y ambas se descuentan del organizador.
 La comisión de Mercado Pago es una estimación (3,29 % + $800 + IVA 19 %): confirmarla en el panel de Mercado Pago.
