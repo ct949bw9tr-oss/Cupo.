@@ -8,4 +8,5 @@ window.CUPO_CONFIG = {
   SUPABASE_ANON_KEY: "TU_LLAVE_ANON",
   DEMO: false,
   OTP_LENGTH: 6, // dígitos del código que llega al correo (igual que en Supabase → Auth → Email)
+  APPLE_WALLET: false, // true cuando los certificados de Apple estén en Supabase (función wallet-pass)
 };

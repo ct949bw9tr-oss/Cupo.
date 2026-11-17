@@ -174,6 +174,9 @@ nav.tabs a:hover{color:var(--txt)}
 .ticket .q::before{left:-13px}.ticket .q::after{right:-13px}
 .ticket .qr{background:#fff;padding:9px;border-radius:16px;flex:none;line-height:0;width:138px;height:138px}
 .ticket .qr img,.ticket .qr canvas{display:block}
+.wallet{display:flex;align-items:center;justify-content:center;gap:10px;margin:0 20px 4px;min-height:50px;border-radius:12px;background:#000;color:#fff;text-decoration:none;border:1px solid #3a3a42;font-weight:600;font-size:17px;line-height:1.05;letter-spacing:-.01em}
+.wallet small{display:block;font-size:11px;font-weight:500;opacity:.85}
+.wallet svg{width:26px;height:26px}
 .ticket .acts{display:flex;gap:8px;padding:0 20px 20px}
 .ticket .acts>*{flex:1}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-top:8px}
@@ -306,6 +309,7 @@ if (CFG.DEMO) { const db=document.getElementById('demoBar'); if (db) db.hidden=f
 
 /* Íconos (trazo de 24px) */
 const ICO = {
+  wallet:'<rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 9h18M3 13h18"/><path d="M16 17h2"/>',
   pin:'<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
   nav:'<path d="M3 11 21 3l-8 18-2-8z"/>',
   lock:'<rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -742,6 +746,7 @@ async function vOrder(id, k, txId){
    MIS BOLETAS + TRANSFERIR
    ================================================================ */
 let MY = [];
+const walletURL = code => `${CFG.SUPABASE_URL}/functions/v1/wallet-pass?code=${encodeURIComponent(code)}`;
 async function vMyTickets(){
   loading();
   const { data, error } = await sb.rpc('my_tickets'); if (error) throw error;
@@ -752,6 +757,7 @@ async function vMyTickets(){
     <div class="h" style="${coverStyle(e)}"><span class="ty">${esc(t.type_name)}</span><h3 style="text-shadow:0 2px 12px rgba(0,0,0,.4)">${esc(e.name)}</h3><div class="small" style="font-weight:500">${whenLabel(e.starts_at)} · ${esc(e.venue)}</div></div>
     <div class="q"><div class="qr" id="qr_${i}"></div><div style="min-width:0"><div class="small muted">A nombre de</div><b style="font-size:16px">${esc(t.holder_name)}</b>
       <div class="code" style="margin-top:8px">${t.code}</div><div class="status" style="color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'Ya entró':'Lista para entrar'}</div>${t.transfers>0?'<span class="badge" style="margin:8px 0 0">Te la pasaron</span>':''}</div></div>
+    ${CFG.APPLE_WALLET && !t.checked_in_at ? `<a class="wallet" href="${esc(walletURL(t.code))}" aria-label="Agregar a Apple Wallet">${icon('wallet')}<span><small>Agregar a</small>Apple Wallet</span></a>`:''}
     <div class="acts">${!t.checked_in_at && e.allow_transfers ? `<button class="btn alt sm" onclick="openTransfer(${i})">${icon('send')} Transferir</button>`:''}
       <a class="btn alt sm" href="#/e/${e.slug}">Ver evento</a></div></div>`; };
   app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>Boletas</h1><p>${esc(myEmail())}</p></div>
