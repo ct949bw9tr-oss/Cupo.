@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Cupo — Vista de prueba</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>window.CUPO_CONFIG={APP_NAME:"Cupo",CITY:"Barranquilla",SUPABASE_URL:"demo",SUPABASE_ANON_KEY:"demo",DEMO:true,OTP_CHANNEL:"sms"};</script>
+<script>/* Backend de DEMOSTRACIÓN: simula Supabase en memoria para poder ver la app sin cuentas. */
+(function(){
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+const code4 = () => Math.random().toString(36).slice(2,6).toUpperCase().padEnd(4,'X');
+let ME = null; const USERS = {}; let pendingPhone = null;   // celular → id
+const S = { pct: .02, gp: .0265, gf: 700, iva: .19 };
+const db = { events: [], ticket_types: [], orders: [], tickets: [], profiles: [{ id: 'demo-user', name: null, is_admin: true }] };
+let signedIn = false;
+const myPh = () => ME ? ME.phone : '';
+const norm = p => { const d=String(p||'').replace(/\D/g,''); return d.length===10&&d[0]==='3' ? '57'+d : d; };
+
+function addEvent(e, tiers){ const ev = { id: uid(), owner_id: 'demo-user', published: true, allow_transfers: true, palette: 'neon', cover_url: null, is_private: false, fee_mode: 'buyer', access_code: code4()+'XY', created_at: new Date().toISOString(), ...e }; db.events.push(ev);
+  const made = tiers.map((t,i)=>{ const r={ id: uid(), event_id: ev.id, sold: 0, sort: i, unlock_after:null, sales_end:null, ...t }; db.ticket_types.push(r); return r; });
+  made.forEach(r=>{ if (r.unlock!=null) { r.unlock_after = made[r.unlock].id; delete r.unlock; } }); return ev; }
+addEvent({ slug:'diciembre', name:'Fiesta de Diciembre', starts_at:'2026-12-19T21:00:00-05:00', venue:'Terraza Alto Prado', address:'Cra. 52 #79-50', city:'Barranquilla', spotify_url:'https://open.spotify.com/playlist/37i9dQZF1DX10zKzsJ2jva', description:'La fiesta de regreso a casa 🎉\nDress code: blanco · +18' },
+  [{name:'Early Bird',price:60000,quantity:100,sold:100},{name:'Etapa 2',price:80000,quantity:250,sold:132,unlock:0},{name:'Etapa 3',price:100000,quantity:150,unlock:1},{name:'VIP',price:150000,quantity:50,sold:44}]);
+addEvent({ slug:'sunset', name:'Sunset en Puerto Colombia', starts_at:'2026-12-27T16:00:00-05:00', venue:'Playa Pradomar', city:'Puerto Colombia', palette:'caribe', description:'DJ set al atardecer frente al mar.' },
+  [{name:'General',price:45000,quantity:300,sold:88}]);
+addEvent({ slug:'carnaval', name:'Pre-Carnaval 2027', starts_at:'2027-01-24T20:00:00-05:00', venue:'Centro de Eventos', city:'Barranquilla', palette:'carnaval', description:'Arrancamos la temporada de Carnaval.' },
+  [{name:'General',price:70000,quantity:500,sold:21},{name:'Palco',price:250000,quantity:20,sold:3}]);
+addEvent({ slug:'cumple', name:'Cumple de Sofi', starts_at:'2026-12-12T20:00:00-05:00', venue:'Casa en Villa Country', city:'Barranquilla', palette:'noche', is_private:true, access_code:'SOFI26', address:'Calle 77 #59-35', hide_address:true, description:'Evento privado solo con invitación.' },
+  [{name:'Entrada',price:20000,quantity:60,sold:12}]);
+// algunas ventas de ejemplo para el panel
+(function seedSales(){
+  const ev = db.events[0], names=['Laura Gómez','Andrés Pérez','Camila Ruiz','Mateo Díaz','Valentina Rojas','Sebastián Mora'];
+  names.forEach((n,i)=>{ const tt=db.ticket_types.filter(t=>t.event_id===ev.id)[i%2?3:1]; const o={ id:uid(), token:uid(), reference:'CUP-261110-'+code4()+code4(), event_id:ev.id, buyer_name:n, buyer_email:n.split(' ')[0].toLowerCase()+'@gmail.com', buyer_phone:'30012345'+(10+i), items:[{ticket_type_id:tt.id,name:tt.name,qty:1,price:tt.price}], qty:1, subtotal:tt.price, fee_mode:'buyer', status:'paid', created_at:new Date(Date.now()-i*36e5).toISOString() };
+    Object.assign(o, fees(tt.price,'buyer')); db.orders.push(o);
+    db.tickets.push({ id:uid(), code:'CUP-'+code4()+'-'+code4(), order_id:o.id, event_id:ev.id, ticket_type_id:tt.id, type_name:tt.name, holder_name:n, holder_phone:'57300123450'+i, transfers:0, price:tt.price, checked_in_at: i<2? new Date().toISOString():null, created_at:o.created_at }); });
+})();
+
+function fees(sub, mode){ const pf=Math.round(sub*S.pct); let t, g;
+  if(mode==='buyer'){ t=Math.ceil((sub+pf+S.gf*(1+S.iva))/(1-S.gp*(1+S.iva))); } else t=sub;
+  g=Math.ceil((t*S.gp+S.gf)*(1+S.iva)); return { platform_fee:pf, gateway_fee:g, total:t }; }
+function ttState(t){ if (t.sales_end && new Date()>new Date(t.sales_end)) return 'ended';
+  const p = t.unlock_after && db.ticket_types.find(x=>x.id===t.unlock_after);
+  if (p && p.sold < p.quantity && !(p.sales_end && new Date()>new Date(p.sales_end))) return 'locked'; return 'open'; }
+function evJSON(e){ return { id:e.id, slug:e.slug, name:e.name, starts_at:e.starts_at, venue:e.venue, city:e.city, description:e.description, cover_url:e.cover_url, palette:e.palette, is_private:e.is_private, fee_mode:e.fee_mode,
+  address: e.hide_address ? null : (e.address||''), hide_address: !!e.hide_address, spotify_url: e.spotify_url||null,
+  allow_transfers: e.allow_transfers!==false, host: (db.profiles.find(p=>p.id===e.owner_id)||{}).name || 'Cupo Eventos',
+  ticket_types: db.ticket_types.filter(t=>t.event_id===e.id).sort((a,b)=>a.sort-b.sort||a.price-b.price).map(t=>({ id:t.id, name:t.name, price:t.price, available:Math.max(0,t.quantity-t.sold), state:ttState(t), sales_end:t.sales_end, unlock_after_name:(db.ticket_types.find(x=>x.id===t.unlock_after)||{}).name||null })) }; }
+function summary(id){ const os=db.orders.filter(o=>o.event_id===id&&o.status==='paid');
+  const s=k=>os.reduce((a,o)=>a+o[k],0);
+  return { tickets:db.ticket_types.filter(t=>t.event_id===id).reduce((a,t)=>a+t.sold,0), orders:os.length, gross:s('total'), subtotal:s('subtotal'), platform_fee:s('platform_fee'), gateway_fee:s('gateway_fee'),
+    organizer_net: os.reduce((a,o)=>a+(o.fee_mode==='buyer'?o.subtotal:o.subtotal-o.platform_fee-o.gateway_fee),0),
+    checked_in: db.tickets.filter(t=>t.event_id===id&&t.checked_in_at).length }; }
+
+const RPC = {
+  list_public_events: () => db.events.filter(e=>e.published&&!e.is_private).sort((a,b)=>a.starts_at.localeCompare(b.starts_at)).map(evJSON),
+  get_event: ({p_slug,p_code}) => { const e=db.events.find(x=>x.slug===p_slug); if(!e) return null;
+    if(e.is_private && (p_code||'').toUpperCase()!==e.access_code && e.owner_id!==(signedIn&&ME&&ME.id)) return { locked:true, slug:e.slug, name:e.name }; return evJSON(e); },
+  find_private_event: ({p_code}) => { const e=db.events.find(x=>x.is_private&&x.access_code===String(p_code).trim().toUpperCase()); return e?{slug:e.slug,code:e.access_code}:null; },
+  calc_fees: ({p_subtotal,p_mode}) => [fees(p_subtotal,p_mode)],
+  get_order: ({p_order,p_token}) => { const o=db.orders.find(x=>x.id===p_order&&x.token===p_token); if(!o) return null; const e=db.events.find(x=>x.id===o.event_id);
+    return { id:o.id, reference:o.reference, status:o.status, total:o.total, buyer_name:o.buyer_name, qty:o.qty, event:{name:e.name,starts_at:e.starts_at,venue:e.venue,address:e.address||'',spotify_url:e.spotify_url||null,city:e.city,palette:e.palette,cover_url:e.cover_url,slug:e.slug},
+      tickets: db.tickets.filter(t=>t.order_id===o.id).map(t=>({code:t.code,type_name:t.type_name,holder_name:t.holder_name,checked_in_at:t.checked_in_at})) }; },
+  event_summary: ({p_event}) => summary(p_event),
+  check_in: ({p_event,p_code}) => { const t=db.tickets.find(x=>x.code===String(p_code).trim().toUpperCase()); if(!t||t.event_id!==p_event) return {result:'invalid'};
+    if(t.checked_in_at) return {result:'used',holder:t.holder_name,type:t.type_name,at:t.checked_in_at}; t.checked_in_at=new Date().toISOString(); return {result:'ok',holder:t.holder_name,type:t.type_name}; },
+  my_tickets: () => db.tickets.filter(t=>myPh() && t.holder_phone===myPh()).map(t=>{ const e=db.events.find(x=>x.id===t.event_id);
+    return { code:t.code, type_name:t.type_name, holder_name:t.holder_name, checked_in_at:t.checked_in_at, transfers:t.transfers||0,
+      event:{ id:e.id, slug:e.slug, name:e.name, starts_at:e.starts_at, venue:e.venue, address:e.address||'', city:e.city, palette:e.palette, cover_url:e.cover_url, spotify_url:e.spotify_url||null, allow_transfers:e.allow_transfers!==false } }; })
+    .sort((a,b)=>a.event.starts_at.localeCompare(b.event.starts_at)),
+  transfer_ticket: ({p_code,p_phone,p_name}) => { const dest=norm(p_phone); if(dest.length<10) throw new Error('BAD_PHONE'); if((p_name||'').trim().length<2) throw new Error('BAD_NAME');
+    const t=db.tickets.find(x=>x.code===p_code); if(!t||t.holder_phone!==myPh()) throw new Error('NOT_YOURS'); if(dest===myPh()) throw new Error('SAME_PHONE'); if(t.checked_in_at) throw new Error('ALREADY_USED');
+    t.holder_phone=dest; t.holder_name=p_name.trim(); t.code='CUP-'+code4()+'-'+code4(); t.transfers=(t.transfers||0)+1;
+    return { ok:true, to_phone:dest, event:(db.events.find(e=>e.id===t.event_id)||{}).name }; },
+  platform_summary: () => db.events.map(e=>{ const s=summary(e.id); return { event:e.name, starts_at:e.starts_at, owner:'Tú', tickets:s.tickets, gross:s.gross, platform_fee:s.platform_fee, owed_to_organizer:s.organizer_net }; }),
+};
+
+function createOrder(b){
+  if(!ME) return { error:'Entra con tu celular para comprar.' };
+  const e=db.events.find(x=>x.slug===b.slug); if(!e) return { error:'Este evento no existe.' };
+  if(e.is_private && (b.code||'').toUpperCase()!==e.access_code) return { error:'Código no válido.' };
+  if((b.name||'').trim().length<3) return { error:'Escribe tu nombre completo.' };
+  let sub=0,n=0; const items=[];
+  for(const it of b.items){ const t=db.ticket_types.find(x=>x.id===it.ticket_type_id); if(ttState(t)!=='open') return { error:`Las boletas "${t.name}" no están a la venta en este momento.` }; if(t.sold+it.qty>t.quantity) return { error:`No quedan suficientes boletas "${t.name}".` }; sub+=t.price*it.qty; n+=it.qty; items.push({ticket_type_id:t.id,name:t.name,qty:it.qty,price:t.price}); }
+  const o={ id:uid(), token:uid(), reference:'CUP-'+new Date().toISOString().slice(2,10).replace(/-/g,'')+'-'+code4()+code4(), event_id:e.id, buyer_name:b.name.trim(), buyer_email:'', buyer_phone:myPh(), items, qty:n, subtotal:sub, fee_mode:e.fee_mode, status:'pending', created_at:new Date().toISOString(), ...fees(sub,e.fee_mode) };
+  db.orders.push(o);
+  return { data:{ orderId:o.id, token:o.token, reference:o.reference, amountInCents:o.total*100, currency:'COP', signature:'demo', publicKey:'pub_test_demo', redirectUrl:'#demo' } };
+}
+function fulfill(reference){ const o=db.orders.find(x=>x.reference===reference); if(!o||o.status==='paid') return; o.status='paid';
+  o.items.forEach(it=>{ const t=db.ticket_types.find(x=>x.id===it.ticket_type_id); t.sold+=it.qty;
+    for(let i=0;i<it.qty;i++) db.tickets.push({ id:uid(), code:'CUP-'+code4()+'-'+code4(), order_id:o.id, event_id:o.event_id, ticket_type_id:t.id, type_name:t.name, holder_name:o.buyer_name, holder_phone:o.buyer_phone, transfers:0, price:t.price, checked_in_at:null, created_at:new Date().toISOString() }); }); }
+window.__demoFulfill = fulfill;
+
+/* query builder mínimo */
+function table(name){
+  let rows = () => db[name].slice(), filters=[], orderBy=null, asc=true, op='select', payload=null, wantSingle=false, embed=false;
+  const api = {
+    select(cols){ if(cols && cols.includes('ticket_types(')) embed=true; return api; },
+    eq(k,v){ filters.push([k,v]); return api; },
+    order(k,o){ orderBy=k; asc=!(o&&o.ascending===false); return api; },
+    single(){ wantSingle=true; return api; }, maybeSingle(){ wantSingle=true; return api; },
+    insert(p){ op='insert'; payload=p; return api; }, update(p){ op='update'; payload=p; return api; }, delete(){ op='delete'; return api; },
+    then(res, rej){ return Promise.resolve(run()).then(res, rej); }
+  };
+  function match(r){ return filters.every(([k,v])=>r[k]===v); }
+  function run(){
+    if(op==='insert'){ const r={ id:uid(), ...payload };
+      if(name==='events'){ Object.assign(r,{ owner_id:ME.id, allow_transfers: payload.allow_transfers!==false, slug:Math.random().toString(36).slice(2,10), access_code:code4()+code4().slice(0,2), published:true, palette:r.palette||'neon', created_at:new Date().toISOString() }); }
+      if(name==='ticket_types'){ r.sold=0; r.unlock_after=r.unlock_after||null; r.sales_end=r.sales_end||null; }
+      db[name].push(r); return { data: wantSingle? r : [r], error:null }; }
+    if(op==='update'){ const hit=db[name].filter(match);
+      if(name==='ticket_types' && hit.some(t=>payload.quantity!=null && payload.quantity<t.sold)) return { data:null, error:{message:'La cantidad no puede ser menor a lo vendido'} };
+      hit.forEach(r=>Object.assign(r,payload)); return { data:null, error:null }; }
+    if(op==='delete'){ const hit=db[name].filter(match);
+      if(name==='events' && hit.some(e=>db.orders.some(o=>o.event_id===e.id&&o.status==='paid'))) return { data:null, error:{message:'Este evento ya tiene ventas. Ocúltalo en vez de borrarlo.'} };
+      if(name==='ticket_types' && hit.some(t=>t.sold>0)) return { data:null, error:{message:'No puedes borrar un tipo que ya tiene ventas'} };
+      db[name]=db[name].filter(r=>!match(r)); return { data:null, error:null }; }
+    let out = rows().filter(match);
+    if(orderBy) out.sort((a,b)=>(String(a[orderBy])>String(b[orderBy])?1:-1)*(asc?1:-1));
+    if(embed) out = out.map(r=>({ ...r, ticket_types: db.ticket_types.filter(t=>t.event_id===r.id).map(t=>({...t})) }));
+    else out = out.map(r=>({...r}));
+    if(wantSingle) return out[0] ? { data:out[0], error:null } : { data:null, error:{message:'No encontrado'} };
+    return { data:out, error:null };
+  }
+  return api;
+}
+
+const listeners=[];
+window.supabase = { createClient(){ return {
+  auth:{
+    getSession: async()=>({ data:{ session: signedIn&&ME? { user: ME } : null } }),
+    onAuthStateChange(cb){ listeners.push(cb); },
+    signInWithOtp: async({phone})=>{ pendingPhone = norm(phone); return { error:null }; },
+    verifyOtp: async({token})=>{ if(String(token)!=='123456') return { error:{ message:'Token has expired or is invalid' } };
+      let id = USERS[pendingPhone];
+      if(!id){ id = Object.keys(USERS).length===0 ? 'demo-user' : uid(); USERS[pendingPhone]=id; if(!db.profiles.find(p=>p.id===id)) db.profiles.push({ id, name:null, is_admin:false }); }
+      ME = { id, phone: pendingPhone }; signedIn = true; listeners.forEach(l=>l('SIGNED_IN')); return { error:null }; },
+    signOut: async()=>{ signedIn=false; ME=null; listeners.forEach(l=>l('SIGNED_OUT')); },
+  },
+  rpc: async (n,a)=>{ try { return { data: RPC[n] ? RPC[n](a||{}) : null, error:null }; } catch(err) { return { data:null, error:{ message: err.message } }; } },
+  from: name => table(name),
+  functions:{ invoke: async (n,{body})=>{
+    if(n==='create-order'){ const r=createOrder(body); return r.error? { data:{ error:r.error }, error:null } : { data:r.data, error:null }; }
+    return { data:{ status:'APPROVED' }, error:null }; } },
+  storage:{ from(){ return {
+    upload: async (path, blob)=>{ window.__lastUpload = await new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(blob); }); return { error:null }; },
+    getPublicUrl: ()=>({ data:{ publicUrl: window.__lastUpload } }) }; } },
+}; } };
+
+/* Checkout de Wompi simulado */
+window.WidgetCheckout = function(cfg){
+  this.open = function(cb){
+    const total = new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(cfg.amountInCents/100);
+    const root=document.createElement('div'); root.className='modal'; root.style.zIndex=80;
+    root.innerHTML=`<div class="sheet" style="background:#fff;color:#1a1a1a">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:20px;color:#2c2a29">wompi</b><span style="font-size:12px;color:#777">Simulación · no se cobra</span></div>
+      <p style="margin:14px 0 4px;color:#555;font-size:13px">Total a pagar</p><div style="font-size:30px;font-weight:800">${total}</div>
+      <p style="margin:16px 0 8px;color:#555;font-size:13px">Elige cómo pagar</p>
+      ${['Nequi','PSE','Tarjeta débito o crédito','Botón Bancolombia','Daviplata'].map((m,i)=>`<label style="display:flex;gap:10px;align-items:center;padding:12px;border:1px solid #ddd;border-radius:12px;margin:6px 0;color:#1a1a1a;font-size:15px"><input type="radio" name="wm" ${i===0?'checked':''} style="width:auto"> ${m}</label>`).join('')}
+      <button id="wPay" style="margin-top:14px;width:100%;padding:14px;border-radius:12px;background:#dfff61;color:#1a1a1a;font-weight:700;font-size:16px">Pagar ${total}</button>
+      <button id="wCancel" style="margin-top:8px;width:100%;padding:10px;background:none;color:#777">Cancelar</button></div>`;
+    document.body.appendChild(root);
+    root.querySelector('#wCancel').onclick=()=>root.remove();
+    root.querySelector('#wPay').onclick=()=>{ root.querySelector('#wPay').textContent='Procesando…'; setTimeout(()=>{ root.remove(); window.__demoFulfill(cfg.reference); cb({ transaction:{ id:'demo-tx', status:'APPROVED' } }); }, 1200); };
+  };
+};
+window.QRCode = window.QRCode || null;
+})();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{--bg:#000;--card:#0e0e10;--card2:#18181b;--line:#232327;--txt:#fafafa;--mut:#8b8b94;--hot:#fafafa;--acc:#c8ff3d;--sun:#ffc531;--ok:#34d399;--bad:#f87171;--r:20px}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--txt);font-family:Inter,system-ui,sans-serif;font-size:15px;line-height:1.45;min-height:100vh;padding-bottom:calc(84px + env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
+h1,h2,h3,.disp{font-family:"Inter Tight",Inter,sans-serif;letter-spacing:-.03em;font-weight:800}
+a{color:inherit}
+button{font:inherit;cursor:pointer;border:0;color:inherit}
+input,select,textarea{font:inherit;color:var(--txt);background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:13px 14px;width:100%;appearance:none;-webkit-appearance:none}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),linear-gradient(135deg,var(--mut) 50%,transparent 50%);background-position:calc(100% - 18px) 55%,calc(100% - 13px) 55%;background-size:5px 5px;background-repeat:no-repeat;padding-right:34px}
+input[type=checkbox]{appearance:auto;-webkit-appearance:auto;width:auto}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#fafafa}
+label{display:block;font-size:13px;color:var(--mut);margin:16px 0 6px}
+.wrap{max-width:560px;margin:0 auto;padding:4px 18px 24px;position:relative;z-index:1}
+header.top{display:flex;align-items:center;justify-content:space-between;padding:calc(14px + env(safe-area-inset-top)) 18px 8px;max-width:560px;margin:0 auto;position:relative;z-index:2}
+.logo{font-family:"Inter Tight",Inter,sans-serif;font-weight:800;font-size:26px;letter-spacing:-.05em;text-decoration:none;color:var(--txt)}
+.logo::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--acc);margin-left:3px}
+.pill{font-size:13px;padding:8px 14px;border-radius:99px;background:var(--card2);color:var(--txt);border:1px solid var(--line);text-decoration:none;font-weight:600}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--txt);color:#000;display:flex;align-items:center;justify-content:center;font-weight:800;text-decoration:none;font-size:15px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:8px 4px calc(8px + env(safe-area-inset-bottom));z-index:20}
+nav.tabs a{color:var(--mut);font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 12px;text-decoration:none;font-weight:500}
+nav.tabs svg{width:23px;height:23px}
+nav.tabs a.on{color:var(--txt)}
+.btn{display:block;text-align:center;text-decoration:none;background:var(--txt);color:#000;font-weight:700;padding:15px 18px;border-radius:99px;width:100%;font-size:15px}
+.btn.alt{background:var(--card2);color:var(--txt);border:1px solid var(--line)}
+.btn.sm{width:auto;padding:10px 16px;font-size:13px;display:inline-block}
+.btn:disabled{opacity:.35}
+.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin:12px 0}
+.card h3{font-size:17px}
+.sec{margin-top:26px}.sec>h3{font-size:18px;margin-bottom:10px}
+/* tarjetas de evento */
+.ev{display:block;text-decoration:none;color:inherit;margin:18px 0 26px}
+.cov{aspect-ratio:1/1;border-radius:var(--r);position:relative;display:flex;align-items:flex-end;padding:18px;background-size:cover;background-position:center;overflow:hidden}
+.cov h3{font-size:30px;line-height:.98;text-shadow:0 2px 20px rgba(0,0,0,.35);max-width:90%}
+.cov.has-img h3{display:none}
+.ev .meta{padding:12px 2px 0}
+.ev .when{color:var(--acc);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.ev .ttl{font-family:"Inter Tight",Inter,sans-serif;font-weight:800;font-size:20px;letter-spacing:-.02em;margin-top:2px}
+.ev .sub{color:var(--mut);font-size:14px;display:flex;justify-content:space-between;gap:10px;margin-top:2px}
+.ev .sub b{color:var(--txt);font-weight:600;white-space:nowrap}
+.mini .cov{aspect-ratio:auto;height:120px}.mini .cov h3{font-size:22px}
+.tag{position:absolute;top:14px;left:14px;font-size:12px;font-weight:600;padding:6px 11px;border-radius:99px;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#fff}
+.chips{display:flex;gap:8px;overflow-x:auto;margin:16px -18px 0;padding:0 18px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chips button{flex:none;padding:9px 16px;border-radius:99px;background:var(--card2);border:1px solid var(--line);font-size:14px;font-weight:600;color:var(--mut)}
+.chips button.on{background:var(--txt);color:#000;border-color:var(--txt)}
+/* página de evento */
+.backdrop{position:fixed;top:0;left:0;right:0;height:70vh;z-index:0;background-size:cover;background-position:center;filter:blur(70px) saturate(1.4);opacity:.45;transform:scale(1.2);pointer-events:none}
+.backdrop::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,transparent 30%,#000)}
+.poster{margin-top:6px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.evtitle{font-size:32px;line-height:1.02;margin-top:20px}
+.info{display:flex;gap:14px;align-items:center;padding:12px 0}
+.info .ic{width:44px;height:44px;border-radius:14px;background:var(--card2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;flex:none;font-size:19px}
+.info .ic.date{flex-direction:column;font-size:10px;font-weight:700;line-height:1.1;color:var(--mut);text-transform:uppercase}
+.info .ic.date b{font-size:17px;color:var(--txt)}
+.info .t1{font-weight:600}.info .t2{color:var(--mut);font-size:13px}
+.desc{color:#d4d4d8;white-space:pre-line;margin-top:6px}
+.cta{position:fixed;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom));z-index:15;padding:10px 18px;background:linear-gradient(to top,#000 60%,transparent)}
+.cta .in{max-width:524px;margin:0 auto;display:flex;align-items:center;gap:14px;background:rgba(24,24,27,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:99px;padding:8px 8px 8px 20px}
+.cta .in>div{flex:1}.cta small{color:var(--mut);font-size:12px;display:block}.cta b{font-size:16px}
+.cta .btn{width:auto;padding:13px 22px}
+.tier{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border:1px solid var(--line);border-radius:16px;margin:10px 0;background:var(--card2)}
+.tier.dim{opacity:.5}
+.qty{display:flex;align-items:center;gap:12px;font-weight:700}
+.qty button{width:34px;height:34px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:18px;line-height:1}
+.sum div{display:flex;justify-content:space-between;padding:4px 0;color:var(--mut)}
+.sum div.t{color:var(--txt);font-weight:700;font-size:17px;border-top:1px solid var(--line);margin-top:6px;padding-top:12px}
+.stat{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat .card{margin:0}
+.stat small{color:var(--mut);font-size:12px}.stat .n{font-family:"Inter Tight",Inter,sans-serif;font-size:22px;font-weight:800;margin-top:2px;letter-spacing:-.02em}
+/* boletas */
+.ticket{background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden;margin:16px 0}
+.ticket .h{padding:18px;background-size:cover;background-position:center;min-height:120px;display:flex;flex-direction:column;justify-content:flex-end}
+.ticket .q{padding:18px;display:flex;gap:16px;align-items:center;border-top:1px dashed #333}
+.ticket .qr{background:#fff;padding:8px;border-radius:14px;flex:none}
+.ticket .acts{display:flex;gap:8px;padding:0 18px 18px}
+.ticket .acts>*{flex:1}
+.code{font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.06em}
+.muted{color:var(--mut)}.small{font-size:13px}.hide{display:none!important}
+.tierEdit{display:grid;grid-template-columns:1.1fr 1.2fr .75fr 38px;gap:8px;margin-bottom:8px;align-items:center}
+.tierEdit button{background:var(--card2);color:var(--mut);border:1px solid var(--line);border-radius:12px;height:46px}
+.tierBox{background:var(--card2);border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px}
+.tierBox input,.tierBox select{background:var(--bg)}
+.tierBox .tierEdit{margin-bottom:6px;grid-template-columns:1.3fr 1fr 46px}
+.tierBox .tl{display:block;font-size:11px;color:var(--mut);margin:0 0 4px}
+.stage{display:grid;grid-template-columns:1fr;gap:6px}
+.stage label{margin:4px 0 4px;font-size:11px}
+.map{width:100%;height:210px;border:0;border-radius:16px;margin-top:12px;background:var(--card2);filter:grayscale(.2)}
+.mapph{height:140px;border-radius:16px;margin-top:12px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;background:var(--card2);border:1px solid var(--line);color:var(--mut);font-size:13px;text-align:center;padding:10px}
+.spot{width:100%;border:0;border-radius:14px;margin-top:12px}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:var(--card2);border:1px solid var(--line);margin-left:6px;vertical-align:middle}
+.toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:var(--txt);color:#000;padding:11px 18px;border-radius:99px;font-weight:600;font-size:14px;z-index:90;opacity:0;transition:.25s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.on{opacity:1}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:flex-end;justify-content:center;z-index:40;animation:fade .15s}
+.sheet{background:#0e0e10;border:1px solid var(--line);border-bottom:0;border-radius:26px 26px 0 0;padding:10px 18px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:560px;max-height:92vh;overflow:auto;animation:up .22s ease-out}
+.sheet::before{content:"";display:block;width:40px;height:4px;border-radius:9px;background:#3a3a40;margin:0 auto 14px}
+@keyframes up{from{transform:translateY(40px);opacity:.4}}@keyframes fade{from{opacity:0}}
+.flyerimg{width:100%;border-radius:16px;display:block;margin-top:12px}
+.swatches{display:flex;gap:10px;flex-wrap:wrap}
+.swatches button{width:42px;height:42px;border-radius:50%;border:2px solid transparent}.swatches button.on{border-color:#fff}
+.seg{display:flex;background:var(--card2);border:1px solid var(--line);border-radius:99px;padding:4px}
+.seg button{flex:1;background:none;color:var(--mut);padding:10px;border-radius:99px;font-size:13px;font-weight:600}
+.seg button.on{background:var(--txt);color:#000}
+.chk{padding:16px;border-radius:14px;margin-top:12px;font-weight:600;text-align:center;font-size:17px}
+.list .it{display:flex;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}
+.list .it:last-child{border:0}
+.empty{text-align:center;color:var(--mut);padding:50px 10px}
+.hero{padding:8px 0 4px}.hero h1{font-size:34px;line-height:1.02}.hero p{color:var(--mut);margin-top:6px}
+.note{font-size:12px;color:var(--mut);margin-top:8px}
+.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--txt);border-radius:50%;animation:s 1s linear infinite;margin:50px auto}
+@keyframes s{to{transform:rotate(360deg)}}
+#reader{border-radius:18px;overflow:hidden;background:#000;min-height:260px;border:1px solid var(--line)}
+.flash{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;flex-direction:column;font-family:"Inter Tight",Inter,sans-serif;font-weight:800;font-size:36px;text-align:center;padding:20px}
+.flash small{font-family:Inter;font-weight:500;font-size:18px;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left}
+.phone{display:flex;gap:8px}.phone select{width:108px;flex:none}
+.otp{font-size:28px;letter-spacing:.5em;text-align:center;font-weight:700;padding:14px}
+.back{display:inline-flex;align-items:center;gap:6px;color:var(--mut);text-decoration:none;font-size:14px;margin:4px 0}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="#/" id="logo">cupo</a>
+  <span id="me"></span>
+</header>
+<div style="max-width:560px;margin:0 auto;padding:0 18px;position:relative;z-index:2"><div style="background:rgba(200,255,61,.08);border:1px solid rgba(200,255,61,.3);color:#d9ff7a;border-radius:12px;padding:8px 12px;font-size:12px">Vista de prueba · entra con cualquier número y el código <b>123456</b> · no se cobra plata real</div></div>
+<main class="wrap" id="app"><div class="spin"></div></main>
+<nav class="tabs" id="tabs"></nav>
+<div class="toast" id="toast"></div>
+<div id="modalRoot"></div>
+
+<script>
+/* ================================================================
+   CUPO — app de boletería
+   ================================================================ */
+const CFG = window.CUPO_CONFIG || {};
+const APP = CFG.APP_NAME || 'Cupo';
+const TZ = 'America/Bogota';
+document.title = APP + ' — Boletas';
+document.getElementById('logo').textContent = APP.toLowerCase();
+
+const PALETTES = {
+  neon:{name:'Neón',a:'#ff3d7f',b:'#6a2cff',c:'#0b0a10',txt:'#ffffff'},
+  caribe:{name:'Caribe',a:'#ffb627',b:'#18d6c3',c:'#ff5e3a',txt:'#1a0f00'},
+  noche:{name:'Noche',a:'#1c1c2e',b:'#000000',c:'#d4af37',txt:'#f5e6b8'},
+  carnaval:{name:'Carnaval',a:'#e6007e',b:'#ffd400',c:'#00a651',txt:'#ffffff'},
+};
+
+/* ---------- utilidades ---------- */
+const $ = id => document.getElementById(id);
+const app = () => $('app');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const COP = n => new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(Math.round(n||0));
+const fmtDate = iso => new Date(iso).toLocaleString('es-CO',{timeZone:TZ,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+const datePart = iso => new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));
+const timePart = iso => new Intl.DateTimeFormat('en-GB',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
+const toISO = (d,t) => `${d}T${t||'21:00'}:00-05:00`; // Colombia no tiene horario de verano
+const siteURL = () => location.origin + location.pathname.replace(/index\.html$/,'');
+const eventURL = (slug, code) => siteURL() + '#/e/' + slug + (code ? '/' + code : '');
+const orderURL = (id, k) => siteURL() + '#/orden/' + id + '/' + k;
+
+function toast(t){ const el=$('toast'); el.textContent=t; el.classList.add('on'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('on'),2400); }
+function modal(html){ $('modalRoot').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="sheet">${html}</div></div>`; }
+function closeModal(){ $('modalRoot').innerHTML=''; }
+async function copy(s){ try{ await navigator.clipboard.writeText(s); toast('Copiado ✓'); }catch(e){ modal(`<h3>Copia este texto</h3><input value="${esc(s)}" onclick="this.select()" style="margin-top:12px"><button class="btn alt" style="margin-top:12px" onclick="closeModal()">Listo</button>`); } }
+function coverStyle(e){
+  const p = PALETTES[e.palette] || PALETTES.neon;
+  if (e.cover_url) return `background-image:linear-gradient(to top,rgba(0,0,0,.75),rgba(0,0,0,.1)),url('${esc(e.cover_url)}')`;
+  return `background:radial-gradient(circle at 20% 20%,${p.b},transparent 60%),linear-gradient(135deg,${p.a},${p.c})`;
+}
+const minPrice = e => { const open=(e.ticket_types||[]).filter(t=>(t.state||'open')==='open'&&t.available!==0); const l=open.length?open:(e.ticket_types||[]); return l.length?Math.min(...l.map(t=>t.price)):0; };
+const CAN_EMBED = !CFG.DEMO;
+const mapQuery = e => [e.address, e.venue, e.city].filter(Boolean).join(', ');
+const dirURL = e => 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(mapQuery(e));
+function spotifyEmbed(url){
+  const m = String(url||'').match(/open\.spotify\.com\/(?:intl-[a-z-]+\/)?(playlist|track|album|artist|episode|show)\/([A-Za-z0-9]+)/);
+  return m ? { type:m[1], url:`https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=generator&theme=0`, open:`https://open.spotify.com/${m[1]}/${m[2]}` } : null;
+}
+function locationCard(e, forBuyer){
+  const hidden = e.hide_address && !e.address;
+  return `<div class="card"><h3>Ubicación</h3>
+    <div class="small" style="margin-top:4px">📍 <b>${esc(e.venue)}</b>${e.address?' · '+esc(e.address):''}${e.city?', '+esc(e.city):''}</div>
+    ${hidden ? `<div class="mapph">🔒<b style="color:var(--txt)">Dirección privada</b>Te llega con tu boleta apenas compres.</div>`
+      : (CAN_EMBED ? `<iframe class="map" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=${encodeURIComponent(mapQuery(e))}&output=embed"></iframe>`
+                   : `<div class="mapph">🗺️<b style="color:var(--txt)">Mapa de Google</b>${esc(mapQuery(e))}</div>`)}
+    ${hidden ? '' : `<a class="btn alt" style="margin-top:10px" target="_blank" href="${dirURL(e)}">🧭 Cómo llegar</a>`}
+  </div>`;
+}
+function musicCard(e){
+  const sp = spotifyEmbed(e.spotify_url); if (!sp) return '';
+  const h = ['track','episode'].includes(sp.type) ? 152 : 352;
+  return `<div class="card"><h3>🎧 La música</h3><p class="small muted" style="margin-top:2px">Así va a sonar la noche.</p>
+    ${CAN_EMBED ? `<iframe class="spot" style="height:${h}px" src="${sp.url}" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>`
+      : `<a class="btn" style="margin-top:10px;background:#1db954;color:#000" target="_blank" href="${sp.open}">▶ Escuchar en Spotify</a>`}</div>`;
+}
+function tierStatus(t){
+  const st = t.state || 'open';
+  if (st==='ended') return { ok:false, label:'Venta cerrada' };
+  if (st==='locked') return { ok:false, label:`🔒 Se abre cuando se agote ${esc(t.unlock_after_name||'la etapa anterior')}` };
+  if (t.available<=0) return { ok:false, label:'Agotado' };
+  const until = t.sales_end ? ' · hasta ' + new Date(t.sales_end).toLocaleDateString('es-CO',{timeZone:TZ,day:'numeric',month:'short'}) : '';
+  return { ok:true, label:(t.available<=20?`¡Quedan ${t.available}!`:'Disponible') + until };
+}
+const loading = () => app().innerHTML = '<div class="spin"></div>';
+function localOrders(){ try{ return JSON.parse(localStorage.getItem('cupo_orders')||'[]'); }catch(e){ return []; } }
+function rememberOrder(o){ try{ const l=localOrders().filter(x=>x.id!==o.id); l.unshift(o); localStorage.setItem('cupo_orders', JSON.stringify(l.slice(0,30))); }catch(e){} }
+
+/* ---------- Supabase ---------- */
+if (!CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY) {
+  app().innerHTML = `<div class="card"><h2>Falta configurar</h2><p class="muted" style="margin-top:8px">Abre <b>config.js</b> y pon la URL y la llave de tu proyecto de Supabase. Los pasos están en la guía (LEEME.md).</p></div>`;
+  throw new Error('config');
+}
+const sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+let session = null, profile = null;
+
+async function loadSession(){
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+  profile = null;
+  if (session) {
+    const { data: p } = await sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+    profile = p;
+  }
+  renderMe();
+}
+function renderMe(){
+  const el = $('me'); if (!el) return;
+  if (session) { const n = (profile?.name || '').trim(); el.innerHTML = `<a class="avatar" href="#/panel" title="Perfil">${esc((n[0]||'🙂').toUpperCase())}</a>`; }
+  else el.innerHTML = `<a class="pill" href="#/login">Entrar</a>`;
+}
+let booted = false;
+sb.auth.onAuthStateChange((ev) => {
+  if (ev !== 'SIGNED_OUT') return;
+  setTimeout(async () => { await loadSession(); if (booted) { location.hash = '#/'; route(); } }, 0);
+});
+const myPhone = () => (session?.user?.phone || '').replace(/\D/g,'');
+const fmtPhone = p => { p = String(p||'').replace(/\D/g,''); if (p.startsWith('57') && p.length===12) return '+57 ' + p.slice(2,5) + ' ' + p.slice(5,8) + ' ' + p.slice(8); return p ? '+' + p : ''; };
+const waLink = (phone, text) => `https://wa.me/${String(phone).replace(/\D/g,'')}?text=${encodeURIComponent(text)}`;
+
+/* ---------- navegación ---------- */
+const ICONS = {
+  '':'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  boletas:'<path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z"/>',
+  nuevo:'<rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/>',
+  panel:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'
+};
+function renderTabs(cur){
+  const t=[['','Explorar'],['boletas','Boletas'],['nuevo','Crear'],['panel','Perfil']];
+  $('tabs').innerHTML = t.map(([k,l])=>`<a href="#/${k}" class="${cur===k?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${cur===k?2.4:1.8}" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>${l}</a>`).join('');
+}
+function setBackdrop(style){ let b=$('backdrop'); if(!style){ if(b) b.remove(); return; } if(!b){ b=document.createElement('div'); b.id='backdrop'; b.className='backdrop'; document.body.prepend(b); } b.setAttribute('style', style); }
+function setCTA(html){ let c=$('cta'); if(!html){ if(c) c.remove(); return; } if(!c){ c=document.createElement('div'); c.id='cta'; c.className='cta'; document.body.appendChild(c); } c.innerHTML=`<div class="in">${html}</div>`; }
+
+let stopScanner = null;
+async function route(){
+  if (stopScanner) { try{ await stopScanner(); }catch(e){} stopScanner = null; }
+  closeModal(); setBackdrop(null); setCTA(null);
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('id')); }
+  const [a,b,c] = location.hash.replace(/^#\/?/,'').split('/');
+  renderTabs(a==='e'?'':(['flyer','editar','scan','evento','admin','login'].includes(a)?'panel':a||''));
+  window.scrollTo(0,0);
+  try {
+    switch(a||''){
+      case '': return await vExplore();
+      case 'e': return await vEvent(b, c);
+      case 'boletas': return await requireAuth(()=>vMyTickets());
+      case 'orden': renderTabs('boletas'); return await vOrder(b, c, null);
+      case 'login': return vLogin();
+      case 'nuevo': return await requireAuth(()=>vEdit(null));
+      case 'editar': return await requireAuth(()=>vEdit(b));
+      case 'panel': return await requireAuth(()=>vPanel());
+      case 'evento': return await requireAuth(()=>vDashboard(b));
+      case 'flyer': return await requireAuth(()=>vFlyer(b));
+      case 'scan': return await requireAuth(()=>vScan(b));
+      case 'admin': return await requireAuth(()=>vAdmin());
+      default: location.hash = '#/';
+    }
+  } catch(err) {
+    console.error(err);
+    app().innerHTML = `<div class="card"><b>Algo salió mal</b><p class="muted small" style="margin-top:6px">${esc(err.message||err)}</p></div>`;
+  }
+}
+window.addEventListener('hashchange', route);
+function afterLogin(){ let to = null; try { to = sessionStorage.getItem('cupo_after'); sessionStorage.removeItem('cupo_after'); } catch(e){} return to || '#/boletas'; }
+async function requireAuth(fn){
+  if (!session) { try{ sessionStorage.setItem('cupo_after', location.hash || '#/'); }catch(e){} return vLogin(); }
+  if (!profile?.name) return vName();
+  return fn();
+}
+
+/* ================================================================
+   LOGIN CON CELULAR
+   ================================================================ */
+let LOGIN_PHONE = '';
+function vLogin(){
+  renderTabs('panel');
+  app().innerHTML = `<div class="hero" style="margin-top:20px"><h1>Entra con tu celular</h1><p>Te mandamos un código por ${CFG.OTP_CHANNEL==='whatsapp'?'WhatsApp':'SMS'}. Tus boletas quedan guardadas en tu número.</p></div>
+  <form onsubmit="event.preventDefault();sendCode()" style="margin-top:22px">
+    <label style="margin-top:0">Número de celular</label>
+    <div class="phone"><select id="cc"><option value="57">🇨🇴 +57</option><option value="1">🇺🇸 +1</option><option value="52">🇲🇽 +52</option><option value="34">🇪🇸 +34</option><option value="58">🇻🇪 +58</option><option value="507">🇵🇦 +507</option></select>
+    <input id="ph" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="300 123 4567" required></div>
+    <button class="btn" id="lBtn" style="margin-top:16px">Enviarme el código</button>
+  </form>
+  <p class="note" style="text-align:center;margin-top:14px">Al entrar aceptas los términos y la política de datos de ${esc(APP)}.</p>`;
+}
+async function sendCode(){
+  const cc = $('cc').value, num = $('ph').value.replace(/\D/g,'');
+  if (num.length < 7) return toast('Revisa el número');
+  LOGIN_PHONE = '+' + cc + num;
+  $('lBtn').disabled = true; $('lBtn').textContent = 'Enviando…';
+  const opts = CFG.OTP_CHANNEL === 'whatsapp' ? { channel:'whatsapp' } : {};
+  const { error } = await sb.auth.signInWithOtp({ phone: LOGIN_PHONE, options: opts });
+  if (error) { toast(error.message.includes('rate') ? 'Espera un minuto e intenta otra vez' : 'No se pudo enviar el código'); $('lBtn').disabled=false; $('lBtn').textContent='Enviarme el código'; return; }
+  app().innerHTML = `<div class="hero" style="margin-top:20px"><h1>Escribe el código</h1><p>Lo enviamos a <b style="color:var(--txt)">${esc(LOGIN_PHONE)}</b>.</p></div>
+  <form onsubmit="event.preventDefault();verifyCode()" style="margin-top:22px">
+    <input id="otp" class="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required oninput="if(this.value.length===6)verifyCode()">
+    <button class="btn" id="vBtn" style="margin-top:16px">Entrar</button>
+    <button type="button" class="btn alt" style="margin-top:10px" onclick="vLogin()">Cambiar número</button>
+  </form>`;
+  setTimeout(()=>$('otp')?.focus(), 50);
+}
+let verifying = false;
+async function verifyCode(){
+  if (verifying) return; verifying = true;
+  const token = $('otp').value.replace(/\D/g,'');
+  $('vBtn').disabled = true;
+  const { error } = await sb.auth.verifyOtp({ phone: LOGIN_PHONE, token, type: 'sms' });
+  verifying = false;
+  if (error) { toast('Código incorrecto o vencido'); $('vBtn').disabled=false; $('otp').value=''; return; }
+  await loadSession();
+  if (!profile?.name) return vName();
+  toast('¡Hola, ' + profile.name.split(' ')[0] + '!');
+  location.hash = afterLogin(); route();
+}
+function vName(){
+  app().innerHTML = `<div class="hero" style="margin-top:20px"><h1>¿Cómo te llamas?</h1><p>Este nombre sale en tus boletas.</p></div>
+  <form onsubmit="event.preventDefault();saveName()" style="margin-top:22px">
+    <input id="nm" autocomplete="name" placeholder="Nombre y apellido" required minlength="3">
+    <button class="btn" style="margin-top:16px">Continuar</button></form>`;
+}
+async function saveName(){
+  const name = $('nm').value.trim(); if (name.length < 3) return toast('Escribe tu nombre completo');
+  const { error } = await sb.from('profiles').update({ name }).eq('id', session.user.id);
+  if (error) return toast(error.message);
+  await loadSession(); location.hash = afterLogin(); route();
+}
+
+/* ================================================================
+   EXPLORAR
+   ================================================================ */
+let EXPLORE = [], FILTER = 'all';
+async function vExplore(){
+  loading();
+  const { data, error } = await sb.rpc('list_public_events');
+  if (error) throw error;
+  EXPLORE = data || [];
+  drawExplore();
+}
+function drawExplore(){
+  const now = new Date(), wk = new Date(now.getTime()+7*864e5), mo = new Date(now.getTime()+31*864e5);
+  const list = EXPLORE.filter(e => FILTER==='all' || (FILTER==='week' ? new Date(e.starts_at)<=wk : new Date(e.starts_at)<=mo));
+  app().innerHTML = `
+  <div class="hero" style="margin-top:6px"><h1>Descubre</h1><p>Lo que se mueve en ${esc(CFG.CITY||'Barranquilla')}.</p></div>
+  <div class="chips">${[['all','Todos'],['week','Esta semana'],['month','Este mes']].map(([k,l])=>`<button class="${FILTER===k?'on':''}" onclick="FILTER='${k}';drawExplore()">${l}</button>`).join('')}
+    <button onclick="askCode()">🔒 Tengo un código</button></div>
+  ${list.length ? list.map(evCard).join('') : '<div class="empty">No hay eventos en estas fechas todavía.</div>'}`;
+}
+const whenLabel = iso => new Date(iso).toLocaleString('es-CO',{timeZone:TZ,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+const cap1 = t => t.charAt(0).toUpperCase() + t.slice(1);
+function poster(e, extra=''){
+  return `<div class="cov ${e.cover_url?'has-img':''} ${extra}" style="${coverStyle(e)}">${e.is_private?'<span class="tag">🔒 Privado</span>':''}<h3>${esc(e.name)}</h3></div>`;
+}
+function evCard(e){
+  return `<a class="ev" href="#/e/${e.slug}">${poster(e)}
+    <div class="meta"><div class="when">${whenLabel(e.starts_at)}</div><div class="ttl">${esc(e.name)}</div>
+    <div class="sub"><span>${esc(e.venue)}</span><b>Desde ${COP(minPrice(e))}</b></div></div></a>`;
+}
+function askCode(){
+  modal(`<h2>Evento privado</h2><p class="muted" style="margin-top:4px">Escribe el código que te dieron.</p>
+  <form onsubmit="event.preventDefault();openPrivate()"><input id="pcode" class="otp" style="letter-spacing:.25em;margin-top:16px;text-transform:uppercase" autocapitalize="characters" placeholder="CÓDIGO">
+  <button class="btn" style="margin-top:14px">Entrar</button></form>`);
+  setTimeout(()=>$('pcode')?.focus(),50);
+}
+async function openPrivate(){
+  const c = $('pcode').value.trim(); if (!c) return;
+  const { data } = await sb.rpc('find_private_event', { p_code: c });
+  if (!data) return toast('Código no válido');
+  closeModal(); location.hash = `#/e/${data.slug}/${data.code}`;
+}
+
+/* ================================================================
+   EVENTO + COMPRA
+   ================================================================ */
+let EV = null, CART = {}, EV_CODE = null;
+async function vEvent(slug, code){
+  loading();
+  const { data: e, error } = await sb.rpc('get_event', { p_slug: slug, p_code: code || null });
+  if (error) throw error;
+  if (!e) { app().innerHTML = '<div class="empty">Este evento no existe o ya no está disponible.</div>'; return; }
+  if (e.locked) {
+    app().innerHTML = `<div class="hero" style="margin-top:30px;text-align:center"><div style="font-size:44px">🔒</div><h1 style="font-size:28px;margin-top:8px">${esc(e.name)}</h1>
+      <p>Evento privado. Escribe el código que te dieron.</p></div>
+      <form onsubmit="event.preventDefault();location.hash='#/e/${e.slug}/'+$('ucode').value.trim().toUpperCase()" style="margin-top:20px">
+      <input id="ucode" class="otp" style="letter-spacing:.25em;text-transform:uppercase" autocapitalize="characters" placeholder="CÓDIGO">
+      <button class="btn" style="margin-top:14px">Entrar</button></form>`;
+    if (code) toast('Código no válido');
+    return;
+  }
+  EV = e; EV_CODE = code || null; CART = {};
+  let resume = null; try { resume = sessionStorage.getItem('cupo_cart'); sessionStorage.removeItem('cupo_cart'); } catch(_){}
+  const d = new Date(e.starts_at), o = opt => d.toLocaleString('es-CO',{timeZone:TZ,...opt});
+  const anyOpen = e.ticket_types.some(t=>tierStatus(t).ok);
+  setBackdrop(coverStyle(e));
+  app().innerHTML = `
+  <a class="back" href="#/">‹ Explorar</a>
+  <div class="poster">${poster(e)}</div>
+  ${e.cover_url?`<h1 class="evtitle">${esc(e.name)}</h1>`:'<div style="height:6px"></div>'}
+  <div style="margin-top:14px">
+    <div class="info"><div class="ic date">${o({month:'short'}).replace('.','')}<b>${o({day:'numeric'})}</b></div><div><div class="t1">${cap1(o({weekday:'long'}))}, ${o({day:'numeric',month:'long'})}</div><div class="t2">${o({hour:'numeric',minute:'2-digit'})}</div></div></div>
+    <div class="info"><div class="ic">📍</div><div><div class="t1">${esc(e.venue)}</div><div class="t2">${e.hide_address&&!e.address?'Dirección al comprar':esc([e.address,e.city].filter(Boolean).join(', '))}</div></div></div>
+    ${e.host?`<div class="info"><div class="ic" style="background:var(--txt);color:#000;font-weight:800">${esc(e.host[0].toUpperCase())}</div><div><div class="t2">Organiza</div><div class="t1">${esc(e.host)}</div></div></div>`:''}
+  </div>
+  ${e.description?`<div class="sec"><h3>Sobre el evento</h3><p class="desc">${esc(e.description)}</p></div>`:''}
+  ${musicCard(e)}
+  ${locationCard(e)}
+  <button class="btn alt" style="margin-top:14px" onclick="shareEvent()">Compartir evento</button>
+  <div style="height:90px"></div>`;
+  setCTA(anyOpen ? `<div><small>Desde</small><b>${COP(minPrice(e))}</b></div><button class="btn" onclick="openTickets()">Comprar boletas</button>`
+                 : `<div><b>Agotado</b><small>No quedan boletas disponibles</small></div>`);
+  if (resume && anyOpen && session) { try { CART = JSON.parse(resume) || {}; } catch(_){} openTickets(); }
+}
+function openTickets(){
+  const e = EV;
+  modal(`<h2>Boletas</h2><p class="muted small" style="margin-top:2px">${esc(e.name)} · ${whenLabel(e.starts_at)}</p>
+    <div style="margin-top:12px">${e.ticket_types.map(t=>{const s=tierStatus(t);return `<div class="tier ${s.ok?'':'dim'}">
+      <div><b>${esc(t.name)}</b><div class="small muted">${COP(t.price)} · ${s.label}</div></div>
+      ${s.ok?`<div class="qty"><button onclick="setQty('${t.id}',-1)">−</button><span id="q_${t.id}">${CART[t.id]||0}</span><button onclick="setQty('${t.id}',1)">+</button></div>`:''}</div>`}).join('')}</div>
+    <div class="sum" id="sum" style="margin-top:12px"></div>
+    <button class="btn" id="buyBtn" style="margin-top:14px" onclick="startPayment()" disabled>Elige tus boletas</button>
+    ${e.allow_transfers!==false?'<p class="note" style="text-align:center">Puedes pasarle boletas a tus amigos con su número de celular.</p>':''}`);
+  updSum();
+}
+function setQty(id, d){
+  const t = EV.ticket_types.find(x=>x.id===id);
+  const total = Object.values(CART).reduce((a,b)=>a+b,0);
+  if (d>0 && total>=10) return toast('Máximo 10 boletas por compra');
+  CART[id] = Math.max(0, Math.min((CART[id]||0) + d, t.available));
+  $('q_'+id).textContent = CART[id]; updSum();
+}
+let sumTimer;
+function updSum(){
+  const sub = EV.ticket_types.reduce((a,t)=>a+(CART[t.id]||0)*t.price,0);
+  const n = Object.values(CART).reduce((a,b)=>a+b,0);
+  const btn = $('buyBtn'); if (!btn) return;
+  btn.disabled = n===0;
+  if (!n) { $('sum').innerHTML = ''; btn.textContent = 'Elige tus boletas'; return; }
+  clearTimeout(sumTimer);
+  sumTimer = setTimeout(async ()=>{
+    const { data } = await sb.rpc('calc_fees', { p_subtotal: sub, p_mode: EV.fee_mode });
+    const f = data?.[0] || { total: sub }, service = f.total - sub;
+    if (!$('sum')) return;
+    $('sum').innerHTML = `<div><span>${n} boleta${n===1?'':'s'}</span><span>${COP(sub)}</span></div>
+      ${service>0?`<div><span>Cargo por servicio</span><span>${COP(service)}</span></div>`:''}
+      <div class="t"><span>Total</span><span>${COP(f.total)}</span></div>`;
+    btn.textContent = (session ? 'Pagar ' : 'Entrar y pagar ') + COP(f.total);
+  }, 120);
+}
+function shareEvent(){
+  const url = eventURL(EV.slug, EV_CODE);
+  if (navigator.share) navigator.share({ title: EV.name, url }).catch(()=>{}); else copy(url);
+}
+async function startPayment(){
+  if (!session || !profile?.name) {
+    try { sessionStorage.setItem('cupo_after', location.hash); sessionStorage.setItem('cupo_cart', JSON.stringify(CART)); } catch(e){}
+    closeModal(); setCTA(null); setBackdrop(null); return session ? vName() : vLogin();
+  }
+  const btn = $('buyBtn'); btn.disabled = true; btn.textContent = 'Un momento…';
+  const items = Object.entries(CART).filter(([,q])=>q>0).map(([ticket_type_id,qty])=>({ticket_type_id,qty}));
+  const { data, error } = await sb.functions.invoke('create-order', { body: { slug: EV.slug, code: EV_CODE, items, name: profile.name } });
+  let msg = data?.error;
+  if (error && !msg) { try { msg = (await error.context.json()).error; } catch(e) { msg = 'No se pudo iniciar el pago.'; } }
+  if (msg) { toast(msg); btn.disabled=false; updSum(); return; }
+  rememberOrder({ id: data.orderId, k: data.token, name: EV.name, at: EV.starts_at });
+  closeModal();
+  if (typeof WidgetCheckout === 'undefined') { location.href = data.redirectUrl; return; }
+  const ph = myPhone();
+  const checkout = new WidgetCheckout({
+    currency: data.currency, amountInCents: data.amountInCents, reference: data.reference,
+    publicKey: data.publicKey, signature: { integrity: data.signature }, redirectUrl: data.redirectUrl,
+    customerData: { fullName: profile.name, phoneNumber: ph.startsWith('57') ? ph.slice(2) : ph, phoneNumberPrefix: ph.startsWith('57') ? '+57' : undefined },
+  });
+  checkout.open(result => {
+    const tx = result && result.transaction;
+    location.hash = '#/orden/' + data.orderId + '/' + data.token;
+  });
+}
+
+/* ================================================================
+   CONFIRMACIÓN DE PAGO
+   ================================================================ */
+async function vOrder(id, k, txId){
+  app().innerHTML = '<div class="spin"></div><p class="muted" style="text-align:center">Confirmando tu pago…</p>';
+  if (txId) { try { await sb.functions.invoke('confirm-order', { body: { transactionId: txId } }); } catch(e){} }
+  let o = null;
+  for (let i=0;i<20;i++){
+    const { data } = await sb.rpc('get_order', { p_order: id, p_token: k });
+    o = data;
+    if (!o || o.status !== 'pending' || !txId && i>0) break;
+    await new Promise(r=>setTimeout(r, 3000));
+  }
+  if (!o) { app().innerHTML = '<div class="empty">No encontramos esta compra.</div>'; return; }
+  if (o.status === 'failed') {
+    app().innerHTML = `<div class="hero" style="margin-top:30px;text-align:center"><div style="font-size:44px">😕</div><h1 style="font-size:28px">El pago no se completó</h1>
+      <p>No se te cobró nada. Puedes intentarlo otra vez.</p></div><a class="btn" style="margin-top:20px" href="${siteURL()}#/e/${o.event.slug}">Volver al evento</a>`; return;
+  }
+  if (o.status === 'pending') {
+    app().innerHTML = `<div class="hero" style="margin-top:30px;text-align:center"><div style="font-size:44px">⏳</div><h1 style="font-size:28px">Pago en proceso</h1>
+      <p>Si ya pagaste, tus boletas aparecen en "Boletas" en unos minutos.</p></div>
+      <button class="btn" style="margin-top:20px" onclick="location.reload()">Actualizar</button>`; return;
+  }
+  app().innerHTML = `<div class="hero" style="margin-top:30px;text-align:center"><div style="font-size:52px">🎉</div><h1>¡Estás dentro!</h1>
+    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu número.</p></div>
+    <a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
+    ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su celular.</p>':''}
+    <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;
+}
+
+/* ================================================================
+   MIS BOLETAS + TRANSFERIR
+   ================================================================ */
+let MY = [];
+async function vMyTickets(){
+  loading();
+  const { data, error } = await sb.rpc('my_tickets'); if (error) throw error;
+  MY = data || [];
+  const upcoming = MY.filter(t=>new Date(t.event.starts_at) > new Date(Date.now()-12*36e5));
+  const past = MY.filter(t=>!upcoming.includes(t));
+  const card = (t,i) => { const e=t.event; return `<div class="ticket">
+    <div class="h" style="${coverStyle(e)}"><div class="small" style="opacity:.9;font-weight:600">${esc(t.type_name)}</div><h3 style="font-size:22px;text-shadow:0 2px 12px rgba(0,0,0,.4)">${esc(e.name)}</h3><div class="small">${whenLabel(e.starts_at)} · ${esc(e.venue)}</div></div>
+    <div class="q"><div class="qr" id="qr_${i}"></div><div style="min-width:0"><div class="small muted">A nombre de</div><b>${esc(t.holder_name)}</b>
+      <div class="code" style="margin-top:8px">${t.code}</div><div class="small" style="margin-top:6px;color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'● Ya entró':'● Lista para entrar'}</div></div></div>
+    <div class="acts">${!t.checked_in_at && e.allow_transfers ? `<button class="btn alt sm" onclick="openTransfer(${i})">↗ Transferir</button>`:''}
+      <a class="btn alt sm" href="#/e/${e.slug}">Ver evento</a></div></div>`; };
+  app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>Boletas</h1><p>${esc(fmtPhone(myPhone()))}</p></div>
+    ${upcoming.length ? upcoming.map(t=>card(t, MY.indexOf(t))).join('') : '<div class="empty">No tienes boletas para próximos eventos.<br><br><a class="btn sm" href="#/">Explorar eventos</a></div>'}
+    ${past.length ? `<div class="sec"><h3 class="muted">Eventos pasados</h3>${past.map(t=>`<div class="list"><div class="it"><span>${esc(t.event.name)}</span><span class="muted">${whenLabel(t.event.starts_at)}</span></div></div>`).join('')}</div>`:''}`;
+  upcoming.forEach(t=>{ const i=MY.indexOf(t); try{ new QRCode($('qr_'+i),{text:t.code,width:112,height:112,correctLevel:QRCode.CorrectLevel.M}); }catch(err){} });
+}
+function openTransfer(i){
+  const t = MY[i];
+  modal(`<h2>Transferir boleta</h2><p class="muted small" style="margin-top:4px">${esc(t.type_name)} · ${esc(t.event.name)}</p>
+  <form onsubmit="event.preventDefault();doTransfer(${i})">
+    <label>Nombre de quien la recibe</label><input id="tName" required minlength="2" placeholder="Nombre y apellido">
+    <label>Su celular</label>
+    <div class="phone"><select id="tcc"><option value="57">🇨🇴 +57</option><option value="1">🇺🇸 +1</option><option value="52">🇲🇽 +52</option><option value="34">🇪🇸 +34</option></select><input id="tPh" type="tel" inputmode="tel" placeholder="300 123 4567" required></div>
+    <p class="note">La boleta deja de ser tuya y su QR cambia. La persona la ve al entrar a ${esc(APP)} con ese número.</p>
+    <button class="btn" id="tBtn" style="margin-top:16px">Transferir</button></form>`);
+}
+const XFER_ERR = { NOT_YOURS:'Esta boleta ya no es tuya.', SAME_PHONE:'Ese es tu mismo número.', ALREADY_USED:'Esta boleta ya se usó.', NO_TRANSFERS:'El organizador no permite transferencias.', EVENT_OVER:'El evento ya pasó.', BAD_PHONE:'Revisa el número.', BAD_NAME:'Escribe el nombre.' };
+async function doTransfer(i){
+  const t = MY[i], name = $('tName').value.trim(), phone = $('tcc').value + $('tPh').value.replace(/\D/g,'');
+  $('tBtn').disabled = true;
+  const { data, error } = await sb.rpc('transfer_ticket', { p_code: t.code, p_phone: phone, p_name: name });
+  if (error) { toast(XFER_ERR[error.message] || error.message); $('tBtn').disabled=false; return; }
+  const msg = `¡Hola ${name.split(' ')[0]}! Te pasé una boleta para ${t.event.name} 🎉 Entra a ${siteURL()}#/boletas con tu número (${fmtPhone(data.to_phone)}) y ahí la tienes.`;
+  modal(`<div style="text-align:center"><div style="font-size:44px">✅</div><h2>Boleta transferida</h2><p class="muted" style="margin:6px 0 16px">${esc(name)} ya la tiene en su número ${esc(fmtPhone(data.to_phone))}.</p></div>
+    <a class="btn" style="background:#25d366;color:#000" target="_blank" href="${waLink(data.to_phone, msg)}">Avisarle por WhatsApp</a>
+    <button class="btn alt" style="margin-top:10px" onclick="closeModal();route()">Listo</button>`);
+}
+
+/* ================================================================
+   PERFIL / PANEL DEL ORGANIZADOR
+   ================================================================ */
+async function vPanel(){
+  loading();
+  const { data: evs, error } = await sb.from('events').select('*, ticket_types(sold,quantity,price)').eq('owner_id', session.user.id).order('starts_at');
+  if (error) throw error;
+  app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>${esc(profile.name)}</h1><p>${esc(fmtPhone(myPhone()))}</p></div>
+    <div class="sec"><div class="row"><h3>Mis eventos</h3><a class="btn sm" style="flex:none" href="#/nuevo">+ Crear</a></div>
+    ${evs.length ? evs.map(e=>{const s=e.ticket_types.reduce((a,t)=>a+t.sold,0), q=e.ticket_types.reduce((a,t)=>a+t.quantity,0);
+      return `<a class="ev mini" href="#/evento/${e.id}" style="margin:14px 0">${poster(e)}
+      <div class="meta"><div class="when">${whenLabel(e.starts_at)}${!e.published?' · OCULTO':''}</div><div class="ttl" style="font-size:17px">${esc(e.name)}</div><div class="sub"><span>${s}/${q} vendidas</span></div></div></a>`}).join('')
+    : '<div class="card muted" style="text-align:center">Crea tu primer evento y empieza a vender en minutos.</div>'}</div>
+    ${profile?.is_admin?'<a class="btn alt" href="#/admin" style="margin-top:10px">💰 Ganancias de la plataforma</a>':''}
+    <button class="btn alt" style="margin-top:10px" onclick="editName()">Cambiar mi nombre</button>
+    <button class="btn alt" style="margin-top:10px" onclick="sb.auth.signOut()">Cerrar sesión</button>`;
+}
+function editName(){
+  modal(`<h2>Tu nombre</h2><form onsubmit="event.preventDefault();saveName2()"><input id="nm2" value="${esc(profile.name||'')}" style="margin-top:14px" minlength="3" required><button class="btn" style="margin-top:14px">Guardar</button></form>`);
+}
+async function saveName2(){ const name=$('nm2').value.trim(); const { error } = await sb.from('profiles').update({ name }).eq('id', session.user.id); if (error) return toast(error.message); await loadSession(); closeModal(); route(); }
+
+async function vDashboard(id){
+  loading();
+  const [{ data: e, error }, { data: s }, { data: tickets }, { data: orders }] = await Promise.all([
+    sb.from('events').select('*, ticket_types(*)').eq('id', id).single(),
+    sb.rpc('event_summary', { p_event: id }),
+    sb.from('tickets').select('code,type_name,holder_name,holder_phone,transfers,checked_in_at,order_id,created_at').eq('event_id', id).order('created_at', { ascending:false }),
+    sb.from('orders').select('id,token,buyer_phone,buyer_email,buyer_name,status,total,qty,created_at').eq('event_id', id).eq('status','paid').order('created_at',{ascending:false}),
+  ]);
+  if (error) throw error;
+  const link = eventURL(e.slug, e.is_private ? e.access_code : null);
+  const byOrder = Object.fromEntries((orders||[]).map(o=>[o.id,o]));
+  window._csv = { e, tickets, byOrder };
+  app().innerHTML = `
+  <a href="#/panel" class="back">‹ Perfil</a>
+  <div class="ev mini" style="margin:8px 0 16px">${poster(e)}<div class="meta"><div class="when">${whenLabel(e.starts_at)}</div><div class="ttl">${esc(e.name)}</div><div class="sub"><span>${esc(e.venue)}</span></div></div></div>
+  <div class="stat">
+    <div class="card"><small>Boletas vendidas</small><div class="n">${s.tickets}<span class="small muted"> / ${e.ticket_types.reduce((a,t)=>a+t.quantity,0)}</span></div></div>
+    <div class="card"><small>Han entrado</small><div class="n">${s.checked_in}</div></div>
+    <div class="card"><small>Tú recibes</small><div class="n" style="color:var(--ok)">${COP(s.organizer_net)}</div></div>
+    <div class="card"><small>Pagado por compradores</small><div class="n">${COP(s.gross)}</div></div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <a class="btn" href="#/scan/${e.id}">📷 Escanear entrada</a>
+    <a class="btn alt" href="#/flyer/${e.id}">🎨 Flyer</a>
+  </div>
+  <div class="card">
+    <h3>Compartir</h3>
+    ${e.is_private?`<p class="small muted" style="margin-top:6px">Privado: solo entra quien tenga el link o el código.</p>
+      <div class="row" style="margin-top:8px"><b class="disp" style="font-size:26px;letter-spacing:.1em">${e.access_code}</b><button class="btn alt sm" style="flex:none" onclick="copy('${e.access_code}')">Copiar código</button></div>`
+      :`<p class="small muted" style="margin-top:6px">${e.published?'Público: aparece en Explorar.':'Oculto: no se puede comprar.'}</p>`}
+    <div class="row" style="margin-top:10px"><button class="btn sm" onclick="copy('${link}')">Copiar link</button>
+      <a class="btn alt sm" target="_blank" href="https://wa.me/?text=${encodeURIComponent(e.name+' 🎉 Boletas aquí: '+link)}">WhatsApp</a>
+      <a class="btn alt sm" href="#/e/${e.slug}${e.is_private?'/'+e.access_code:''}">Ver</a></div>
+  </div>
+  <div class="card"><h3>Por tipo de boleta</h3><div class="list" style="margin-top:6px">
+    ${e.ticket_types.sort((a,b)=>a.sort-b.sort||a.price-b.price).map(t=>{const prev=e.ticket_types.find(x=>x.id===t.unlock_after);
+      const st = t.sales_end && new Date(t.sales_end)<new Date() ? 'Cerrada' : t.sold>=t.quantity ? 'Agotada' : (prev && prev.sold<prev.quantity && !(prev.sales_end&&new Date(prev.sales_end)<new Date())) ? 'En espera' : 'A la venta';
+      return `<div class="it"><span>${esc(t.name)} · ${COP(t.price)}<span class="badge">${st}</span>${prev?`<br><span class="small muted">Se abre después de ${esc(prev.name)}</span>`:''}</span><span class="muted">${t.sold}/${t.quantity}</span></div>`}).join('')}</div></div>
+  <div class="card"><div class="row"><h3>Asistentes (${tickets.length})</h3>${tickets.length?'<button class="btn alt sm" style="flex:none" onclick="exportCSV()">Descargar Excel</button>':''}</div>
+    <input placeholder="Buscar nombre o código" style="margin-top:10px" oninput="filterAtt(this.value)">
+    <div class="list" id="att" style="margin-top:6px">${tickets.length?tickets.map(t=>{const o=byOrder[t.order_id]||{};const ph=(o.buyer_phone||'').replace(/\D/g,'');
+      return `<div class="it" data-s="${esc((t.holder_name+' '+t.code+' '+t.holder_phone).toLowerCase())}"><span>${esc(t.holder_name)}${t.transfers?' <span class="badge">transferida</span>':''}<br><span class="small muted">${esc(t.type_name)} · ${esc(fmtPhone(t.holder_phone))}</span></span>
+      <span class="small" style="text-align:right">${t.checked_in_at?'<span style="color:var(--ok)">Entró</span>':'<span class="muted">Pendiente</span>'}
+      ${t.holder_phone?`<br><a target="_blank" href="${waLink(t.holder_phone, 'Hola '+t.holder_name.split(' ')[0]+'! Tu boleta para '+e.name+' está en '+siteURL()+'#/boletas — entra con tu número.')}">Escribirle</a>`:''}</span></div>`}).join(''):'<p class="muted small">Nadie ha comprado todavía.</p>'}</div></div>
+  <a class="btn alt" href="#/editar/${e.id}">Editar evento</a>
+  <button class="btn alt" style="margin-top:10px" onclick="togglePublish('${e.id}',${!e.published})">${e.published?'Ocultar evento (pausar ventas)':'Publicar evento'}</button>`;
+}
+function filterAtt(q){ q=q.toLowerCase(); document.querySelectorAll('#att .it').forEach(el=>el.classList.toggle('hide', !el.dataset.s.includes(q))); }
+async function togglePublish(id, val){ const { error } = await sb.from('events').update({ published: val }).eq('id', id); if (error) return toast(error.message); toast(val?'Evento publicado':'Evento oculto'); route(); }
+function exportCSV(){
+  const { e, tickets, byOrder } = window._csv;
+  const rows = [['Nombre','Celular','Tipo','Código','Entró','Compró']].concat(tickets.map(t=>{const o=byOrder[t.order_id]||{};return [t.holder_name,fmtPhone(t.holder_phone),t.type_name,t.code,t.checked_in_at?'Sí':'No',o.buyer_name||''];}));
+  const csv = '﻿' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = `asistentes-${e.slug}.csv`; a.click();
+}
+
+/* ================================================================
+   CREAR / EDITAR EVENTO
+   ================================================================ */
+let ED = null;
+async function vEdit(id){
+  if (id) {
+    loading();
+    const { data, error } = await sb.from('events').select('*, ticket_types(*)').eq('id', id).single();
+    if (error) throw error;
+    const tiers = data.ticket_types.sort((a,b)=>a.sort-b.sort||a.price-b.price);
+    tiers.forEach(t=>{ t.unlock_idx = tiers.findIndex(x=>x.id===t.unlock_after); t.end_date = t.sales_end ? datePart(t.sales_end) : ''; });
+    ED = { ...data, address: data.address||'', spotify_url: data.spotify_url||'', date: datePart(data.starts_at), time: timePart(data.starts_at), tiers, removed: [] };
+  } else if (!ED || ED.id || ED._for !== 'new') {
+    ED = { _for:'new', name:'', date:'', time:'21:00', venue:'', address:'', hide_address:false, spotify_url:'', city: CFG.CITY||'Barranquilla', description:'', is_private:false, fee_mode:'buyer', palette:'neon', cover_url:null,
+           tiers:[{ name:'Early Bird', price:50000, quantity:100, sold:0, unlock_idx:-1, end_date:'' }], removed:[] };
+  }
+  drawEdit();
+}
+function drawEdit(){
+  const e = ED;
+  app().innerHTML = `<div class="hero"><h1>${e.id?'Editar evento':'Crea tu evento'}</h1><p>Público para venderle a todos, o privado solo con código.</p></div>
+  <div class="card">
+    <label style="margin-top:0">Nombre del evento</label><input id="f_name" value="${esc(e.name)}" placeholder="Ej: Fiesta de Diciembre" maxlength="120">
+    <div class="row"><div><label>Fecha</label><input type="date" id="f_date" value="${e.date}"></div><div><label>Hora</label><input type="time" id="f_time" value="${e.time}"></div></div>
+    <label>Nombre del lugar</label><input id="f_venue" value="${esc(e.venue)}" placeholder="Ej: Terraza Alto Prado">
+    <label>Dirección (para el mapa de Google)</label><input id="f_address" value="${esc(e.address||'')}" placeholder="Ej: Cra. 52 #79-50">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--txt);font-size:14px"><input type="checkbox" id="f_hide" style="width:auto" ${e.hide_address?'checked':''}> Mostrar la dirección solo a quien compre</label>
+    <label>Ciudad</label><input id="f_city" value="${esc(e.city)}">
+    <label>Descripción</label><textarea id="f_desc" rows="4" placeholder="Line up, dress code, edad mínima, reglas…">${esc(e.description)}</textarea>
+    <label>Música de Spotify (opcional)</label><input id="f_spotify" value="${esc(e.spotify_url||'')}" placeholder="Pega el link de una playlist o canción" inputmode="url">
+    <p class="note">En Spotify: ••• → Compartir → Copiar enlace.</p>
+    <label>Foto de portada (opcional)</label><input type="file" accept="image/*" id="f_cover" onchange="pickCover(this)">
+    ${e.cover_url?`<img src="${esc(e.cover_url)}" style="width:100%;border-radius:12px;margin-top:10px"><a href="#" class="small" onclick="syncEd();ED.cover_url=null;drawEdit();return false">Quitar foto</a>`:''}
+  </div>
+  <div class="card"><h3>Visibilidad</h3>
+    <div class="seg" style="margin-top:10px"><button class="${!e.is_private?'on':''}" onclick="syncEd();ED.is_private=false;drawEdit()">🌎 Público</button><button class="${e.is_private?'on':''}" onclick="syncEd();ED.is_private=true;drawEdit()">🔒 Privado</button></div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--txt);font-size:14px;margin-top:14px"><input type="checkbox" id="f_xfer" ${e.allow_transfers!==false?'checked':''}> Permitir que la gente transfiera sus boletas</label>
+    <p class="note">${e.is_private?'No aparece en Explorar. Solo entra quien tenga tu link o el código (se crea automático).':'Aparece en Explorar para todo el mundo.'}</p>
+  </div>
+  <div class="card"><h3>Boletas y etapas</h3>
+    <p class="note" style="margin-top:2px">Crea etapas: cuando se agote una, se abre sola la siguiente (ej. Early Bird → Etapa 2 → Etapa 3).</p>
+    <div id="tiers" style="margin-top:10px">${e.tiers.map((t,i)=>`<div class="tierBox">
+      <span class="tl">Nombre</span><input value="${esc(t.name)}" data-i="${i}" data-k="name" style="margin-bottom:8px">
+      <div class="tierEdit"><span class="tl">Precio (COP)</span><span class="tl">Cantidad</span><span></span></div>
+      <div class="tierEdit"><input type="number" inputmode="numeric" min="1000" step="1000" value="${t.price}" data-i="${i}" data-k="price"><input type="number" inputmode="numeric" min="${t.sold||0}" value="${t.quantity}" data-i="${i}" data-k="quantity"><button onclick="rmTier(${i})" ${t.sold>0?'disabled title="Ya tiene ventas"':''}>✕</button></div>
+      <div class="stage"><div><label>Se abre</label><select data-i="${i}" data-k="unlock_idx"><option value="-1">Desde el inicio</option>${e.tiers.slice(0,i).map((p,j)=>`<option value="${j}" ${t.unlock_idx===j?'selected':''}>Cuando se agote ${esc(p.name||'#'+(j+1))}</option>`).join('')}</select></div>
+      <div><label>Vender hasta (opcional)</label><input type="date" value="${t.end_date||''}" data-i="${i}" data-k="end_date"></div></div>
+      ${t.sold>0?`<p class="note" style="margin-top:6px">${t.sold} vendidas</p>`:''}</div>`).join('')}</div>
+    <div class="row"><button class="btn alt sm" onclick="addStage()">+ Siguiente etapa</button><button class="btn alt sm" onclick="syncEd();ED.tiers.push({name:'VIP',price:150000,quantity:50,sold:0,unlock_idx:-1,end_date:''});drawEdit()">+ Otro tipo (VIP, mesa…)</button></div>
+    <label>¿Quién paga el cargo por servicio?</label>
+    <div class="seg"><button class="${e.fee_mode==='buyer'?'on':''}" onclick="syncEd();ED.fee_mode='buyer';drawEdit()">El comprador</button><button class="${e.fee_mode==='organizer'?'on':''}" onclick="syncEd();ED.fee_mode='organizer';drawEdit()">Yo (organizador)</button></div>
+    <p class="note">${e.fee_mode==='buyer'?'Se suma al precio en el pago. Tú recibes el 100% del precio de cada boleta.':'El comprador paga el precio exacto; el 2% de la app y la comisión de Wompi se descuentan de lo que recibes.'}</p>
+  </div>
+  <button class="btn" id="saveBtn" onclick="saveEvent()">${e.id?'Guardar cambios':'Publicar evento'}</button>
+  ${e.id?`<button class="btn alt" style="margin-top:10px" onclick="askDelete()">Eliminar evento</button>`:''}`;
+}
+function syncEd(){
+  if (!$('f_name')) return;
+  Object.assign(ED, { name:$('f_name').value, date:$('f_date').value, time:$('f_time').value, venue:$('f_venue').value, address:$('f_address').value, hide_address:$('f_hide').checked, allow_transfers:$('f_xfer').checked, spotify_url:$('f_spotify').value.trim(), city:$('f_city').value, description:$('f_desc').value });
+  document.querySelectorAll('#tiers input, #tiers select').forEach(inp=>{ const t=ED.tiers[+inp.dataset.i], k=inp.dataset.k;
+    if (k==='name' || k==='end_date') t[k] = inp.value; else if (k==='unlock_idx') t[k] = parseInt(inp.value); else t[k] = Math.max(0, parseInt(inp.value)||0); });
+}
+function rmTier(i){ syncEd(); if (ED.tiers.length<=1) return toast('Debe haber al menos un tipo'); const [t]=ED.tiers.splice(i,1); if(t.id) ED.removed.push(t.id);
+  ED.tiers.forEach(x=>{ if (x.unlock_idx===i) x.unlock_idx=-1; else if (x.unlock_idx>i) x.unlock_idx--; }); drawEdit(); }
+function addStage(){ syncEd(); const last=ED.tiers.length-1, p=ED.tiers[last]; const n=ED.tiers.filter(t=>/^etapa/i.test(t.name)).length+2;
+  ED.tiers.push({ name:'Etapa '+n, price:Math.round((p.price*1.2)/5000)*5000||p.price, quantity:p.quantity, sold:0, unlock_idx:last, end_date:'' }); drawEdit(); }
+async function pickCover(input){
+  const f = input.files[0]; if (!f) return;
+  syncEd(); toast('Subiendo foto…');
+  const img = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=URL.createObjectURL(f); });
+  const s = Math.min(1, 1600/Math.max(img.width,img.height)), c=document.createElement('canvas');
+  c.width=Math.round(img.width*s); c.height=Math.round(img.height*s); c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  const blob = await new Promise(r=>c.toBlob(r,'image/jpeg',.85));
+  const path = `${session.user.id}/${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('covers').upload(path, blob, { contentType:'image/jpeg' });
+  if (error) return toast('No se pudo subir: '+error.message);
+  ED.cover_url = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+  drawEdit(); toast('Foto lista ✓');
+}
+async function saveEvent(){
+  syncEd(); const e = ED;
+  if (e.name.trim().length < 2) return toast('Ponle nombre al evento');
+  if (e.spotify_url && !spotifyEmbed(e.spotify_url)) return toast('Ese link de Spotify no sirve. Copia el enlace de una playlist o canción.');
+  if (!e.date) return toast('Elige la fecha');
+  for (const t of e.tiers) {
+    if (!t.name.trim()) return toast('Cada boleta necesita nombre');
+    if (t.price < 1000) return toast('El precio mínimo es $1.000');
+    if (t.quantity < (t.sold||0)) return toast(`"${t.name}" no puede tener menos de ${t.sold} (ya vendidas)`);
+  }
+  $('saveBtn').disabled = true;
+  const row = { name:e.name.trim(), starts_at:toISO(e.date,e.time), venue:e.venue.trim(), address:(e.address||'').trim(), hide_address:!!e.hide_address, allow_transfers:e.allow_transfers!==false, spotify_url:e.spotify_url||null, city:e.city.trim(), description:e.description.trim(),
+                is_private:e.is_private, fee_mode:e.fee_mode, palette:e.palette||'neon', cover_url:e.cover_url };
+  try {
+    let id = e.id;
+    if (id) { const { error } = await sb.from('events').update(row).eq('id', id); if (error) throw error; }
+    else { const { data, error } = await sb.from('events').insert(row).select('id').single(); if (error) throw error; id = data.id; }
+    for (const rid of e.removed) { const { error } = await sb.from('ticket_types').delete().eq('id', rid); if (error) throw error; }
+    const ids = [];
+    for (const [i,t] of e.tiers.entries()) {
+      const tr = { name:t.name.trim(), price:t.price, quantity:t.quantity, sort:i, sales_end: t.end_date ? `${t.end_date}T23:59:00-05:00` : null };
+      if (t.id) { const { error } = await sb.from('ticket_types').update(tr).eq('id', t.id); if (error) throw error; ids.push(t.id); }
+      else { const { data, error } = await sb.from('ticket_types').insert({ ...tr, event_id:id }).select('id').single(); if (error) throw error; ids.push(data.id); }
+    }
+    for (const [i,t] of e.tiers.entries()) {   // etapas: se enlazan después de tener todos los ids
+      const ua = t.unlock_idx>=0 && t.unlock_idx<i ? ids[t.unlock_idx] : null;
+      const { error } = await sb.from('ticket_types').update({ unlock_after: ua }).eq('id', ids[i]); if (error) throw error;
+    }
+    ED = null; toast('Evento guardado ✅'); location.hash = '#/evento/' + id;
+  } catch(err) { toast(err.message); $('saveBtn').disabled = false; }
+}
+function askDelete(){
+  modal(`<h2>¿Eliminar "${esc(ED.name)}"?</h2><p class="muted" style="margin:8px 0 16px">Si ya vendiste boletas no se puede borrar; ocúltalo desde el panel.</p>
+  <div class="row"><button class="btn alt" onclick="closeModal()">Cancelar</button><button class="btn" style="background:var(--bad)" onclick="doDelete()">Eliminar</button></div>`);
+}
+async function doDelete(){ const { error } = await sb.from('events').delete().eq('id', ED.id); closeModal(); if (error) return toast(error.message); ED=null; location.hash='#/panel'; }
+
+/* ================================================================
+   FLYER
+   ================================================================ */
+let FL = { layout:'bold', tag:'' }, FLE = null;
+async function vFlyer(id){
+  loading();
+  const { data, error } = await sb.from('events').select('*, ticket_types(price)').eq('id', id).single();
+  if (error) throw error;
+  FLE = data;
+  app().innerHTML = `<a href="#/evento/${id}" class="back">‹ Volver</a>
+  <div class="hero"><h1>Flyer</h1><p>Formato 4:5 para Instagram. El QR lleva directo a comprar.</p></div>
+  <div class="card">
+    <label style="margin-top:0">Colores</label>
+    <div class="swatches">${Object.entries(PALETTES).map(([k,p])=>`<button title="${p.name}" class="${FLE.palette===k?'on':''}" style="background:linear-gradient(135deg,${p.a},${p.b})" onclick="setPal('${k}')"></button>`).join('')}</div>
+    <label>Estilo</label>
+    <div class="seg" id="lay">${[['bold','Gigante'],['clean','Limpio'],['ticket','Boleta']].map(([k,l])=>`<button class="${FL.layout===k?'on':''}" onclick="FL.layout='${k}';vFlyerRedraw()">${l}</button>`).join('')}</div>
+    <label>Frase extra (opcional)</label><input value="${esc(FL.tag)}" placeholder="Ej: Dress code blanco · +18" oninput="FL.tag=this.value;drawFlyer()">
+  </div>
+  <img id="flyerOut" class="flyerimg" alt="Flyer">
+  <div class="row" style="margin-top:12px"><button class="btn" onclick="shareFlyer()">Compartir / Guardar</button><button class="btn alt" onclick="downloadFlyer()">Descargar</button></div>`;
+  drawFlyer();
+}
+function vFlyerRedraw(){ document.querySelectorAll('#lay button').forEach((b,i)=>b.classList.toggle('on',['bold','clean','ticket'][i]===FL.layout)); drawFlyer(); }
+async function setPal(k){ FLE.palette=k; document.querySelectorAll('.swatches button').forEach((b,i)=>b.classList.toggle('on',Object.keys(PALETTES)[i]===k)); drawFlyer(); await sb.from('events').update({ palette:k }).eq('id', FLE.id); }
+function wrapText(x,text,maxW){ const words=String(text).split(/\s+/), lines=[]; let l=''; words.forEach(w=>{const t=l?l+' '+w:w; if(x.measureText(t).width>maxW&&l){lines.push(l);l=w}else l=t;}); if(l)lines.push(l); return lines; }
+function rr(x,a,b,w,h,r){ x.beginPath(); x.moveTo(a+r,b); x.arcTo(a+w,b,a+w,b+h,r); x.arcTo(a+w,b+h,a,b+h,r); x.arcTo(a,b+h,a,b,r); x.arcTo(a,b,a+w,b,r); x.closePath(); }
+let flyerCanvas = null;
+async function drawFlyer(){
+  const e = FLE; if (!e) return;
+  try{ await document.fonts.load('800 80px "Inter Tight"'); }catch(_){}
+  const p = PALETTES[e.palette]||PALETTES.neon, W=1080, H=1350;
+  const c = document.createElement('canvas'); c.width=W; c.height=H; const x=c.getContext('2d');
+  const D='"Inter Tight", sans-serif', I='Inter, sans-serif';
+  const g=x.createLinearGradient(0,0,W,H); g.addColorStop(0,p.a); g.addColorStop(1,p.c); x.fillStyle=g; x.fillRect(0,0,W,H);
+  const rg=x.createRadialGradient(W*.2,H*.15,10,W*.2,H*.15,W*.9); rg.addColorStop(0,p.b); rg.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=rg; x.fillRect(0,0,W,H);
+  if (e.cover_url) {
+    const im = await new Promise(r=>{const i=new Image(); i.crossOrigin='anonymous'; i.onload=()=>r(i); i.onerror=()=>r(null); i.src=e.cover_url;});
+    if (im) { const s=Math.max(W/im.width,H/im.height); x.globalAlpha=FL.layout==='clean'?1:.6; x.drawImage(im,(W-im.width*s)/2,(H-im.height*s)/2,im.width*s,im.height*s); x.globalAlpha=1;
+      const sh=x.createLinearGradient(0,H*.25,0,H); sh.addColorStop(0,'rgba(0,0,0,.1)'); sh.addColorStop(1,'rgba(0,0,0,.88)'); x.fillStyle=sh; x.fillRect(0,0,W,H); }
+  }
+  const txt = e.cover_url ? '#ffffff' : p.txt;
+  const d = new Date(e.starts_at), o = (opt)=>d.toLocaleString('es-CO',{timeZone:TZ,...opt});
+  const day=o({day:'numeric'}), mon=o({month:'long'}).toUpperCase(), wd=o({weekday:'long'}).toUpperCase(), hr=o({hour:'numeric',minute:'2-digit'}).toUpperCase();
+  const name = e.name;
+  x.fillStyle = txt; x.textBaseline='alphabetic';
+  const fit = (t, start, min, maxLines, maxW) => { let s=start; x.font=`800 ${s}px ${D}`; let L=wrapText(x,t,maxW); while((L.length>maxLines||L.some(l=>x.measureText(l).width>maxW))&&s>min){ s-=8; x.font=`800 ${s}px ${D}`; L=wrapText(x,t,maxW);} return [s,L]; };
+  if (FL.layout==='bold') {
+    x.font=`600 34px ${I}`; x.fillText((e.city||'').toUpperCase()+'  ·  '+wd, 80, 130);
+    const [s,L]=fit(name.toUpperCase(),190,70,4,W-160); let y=250+s*.8; L.forEach(l=>{x.fillText(l,80,y); y+=s*.92;});
+    x.font=`800 250px ${D}`; x.fillText(day,80,H-260); const dw=x.measureText(day).width;
+    x.font=`800 62px ${D}`; x.fillText(mon,104+dw,H-380); x.font=`600 40px ${I}`; x.fillText(hr,108+dw,H-320);
+  } else if (FL.layout==='clean') {
+    x.textAlign='center'; x.font=`600 36px ${I}`; x.fillText(wd+' '+day+' DE '+mon, W/2, 160);
+    const [s,L]=fit(name,140,60,3,W-160); let y=H/2-((L.length-1)*s*.95)/2-60; L.forEach(l=>{x.fillText(l,W/2,y); y+=s*.95;});
+    x.font=`500 38px ${I}`; x.fillText(hr, W/2, y+20); x.textAlign='left';
+  } else {
+    x.fillStyle='rgba(0,0,0,.35)'; rr(x,70,170,W-140,H-500,40); x.fill(); x.fillStyle=txt;
+    x.font=`700 30px ${I}`; x.fillText('ADMIT ONE  ·  '+(e.city||'').toUpperCase(),120,250);
+    const [s,L]=fit(name.toUpperCase(),150,60,3,W-240); let y=250+s; L.forEach(l=>{x.fillText(l,120,y); y+=s*.92;});
+    x.setLineDash([18,14]); x.strokeStyle=txt; x.globalAlpha=.5; x.lineWidth=4; x.beginPath(); x.moveTo(120,H-520); x.lineTo(W-120,H-520); x.stroke(); x.setLineDash([]); x.globalAlpha=1;
+    x.font=`800 64px ${D}`; x.fillText(day+' '+mon,120,H-430); x.font=`500 38px ${I}`; x.fillText(wd+'  ·  '+hr,120,H-375);
+  }
+  x.fillStyle=txt; x.font=`600 34px ${I}`; x.fillText('📍 '+(e.venue||''), 80, H-180);
+  const minP = e.ticket_types?.length ? Math.min(...e.ticket_types.map(t=>t.price)) : 0;
+  x.font=`500 30px ${I}`; x.globalAlpha=.88; x.fillText(FL.tag || ('Boletas desde '+COP(minP)), 80, H-128); x.globalAlpha=1;
+  x.font=`800 30px ${D}`; x.fillText('Boletas en '+APP.toLowerCase()+' · escanea el QR', 80, H-76);
+  try {
+    const h=document.createElement('div');
+    new QRCode(h,{ text: eventURL(e.slug, e.is_private?e.access_code:null), width:200, height:200, correctLevel:QRCode.CorrectLevel.M });
+    const qc=h.querySelector('canvas'); if (qc) { x.fillStyle='#fff'; rr(x,W-300,H-310,230,230,22); x.fill(); x.drawImage(qc,W-285,H-295,200,200); }
+  } catch(_){}
+  flyerCanvas = c;
+  try { $('flyerOut').src = c.toDataURL('image/png'); } catch(err) { $('flyerOut').src=''; toast('No se pudo usar la foto en el flyer'); }
+}
+async function flyerBlob(){ return new Promise(r=>flyerCanvas.toBlob(r,'image/png')); }
+async function shareFlyer(){
+  const b = await flyerBlob(); const f = new File([b], `flyer-${FLE.slug}.png`, { type:'image/png' });
+  if (navigator.canShare && navigator.canShare({ files:[f] })) { try { await navigator.share({ files:[f], title: FLE.name }); } catch(e){} }
+  else downloadFlyer();
+}
+async function downloadFlyer(){ const b=await flyerBlob(); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=`flyer-${FLE.slug}.png`; a.click(); toast('Si no se descarga, mantén presionada la imagen'); }
+
+/* ================================================================
+   ESCÁNER DE ENTRADA
+   ================================================================ */
+async function vScan(id){
+  const { data: e, error } = await sb.from('events').select('id,name').eq('id', id).single();
+  if (error) throw error;
+  app().innerHTML = `<a href="#/evento/${id}" class="back">‹ Volver</a>
+  <div class="hero"><h1>Entrada</h1><p>${esc(e.name)}</p></div>
+  <div id="reader" style="margin-top:12px"></div>
+  <p class="note" id="camNote">Apunta la cámara al QR de la boleta.</p>
+  <form class="card row" onsubmit="event.preventDefault();doCheck('${id}',$('man').value);$('man').value=''">
+    <input id="man" placeholder="O escribe el código: CUP-XXXX-XXXX" autocapitalize="characters" style="text-transform:uppercase">
+    <button class="btn sm" style="flex:none">Validar</button></form>
+  <div class="card list" id="log"><p class="muted small">Aquí verás quién va entrando.</p></div>`;
+  let busy = false;
+  try {
+    await loadScript('https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js');
+    const scanner = new Html5Qrcode('reader');
+    await scanner.start({ facingMode:'environment' }, { fps:10, qrbox:{ width:240, height:240 } }, async (text)=>{
+      if (busy) return; busy = true;
+      await doCheck(id, text.trim());
+      setTimeout(()=>busy=false, 1800);
+    });
+    stopScanner = () => scanner.stop();
+  } catch(err) { $('camNote').textContent = 'No se pudo abrir la cámara. Dale permiso en el navegador o escribe el código.'; }
+}
+function loadScript(src){ return new Promise((res,rej)=>{ if(document.querySelector(`script[src="${src}"]`)) return res(); const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+async function doCheck(eventId, code){
+  if (!code) return;
+  const { data, error } = await sb.rpc('check_in', { p_event: eventId, p_code: code });
+  if (error) return toast(error.message);
+  const map = { ok:['var(--ok)','✓ ADELANTE',`${esc(data.holder)} · ${esc(data.type)}`],
+                used:['var(--sun)','⚠ YA ENTRÓ',`${esc(data.holder)} · ${data.at?new Date(data.at).toLocaleTimeString('es-CO',{timeZone:TZ,hour:'numeric',minute:'2-digit'}):''}`],
+                invalid:['var(--bad)','✕ NO VÁLIDA','Esta boleta no es de este evento'] };
+  const [col, title, sub] = map[data.result];
+  const f = document.createElement('div'); f.className='flash'; f.style.background=col; f.style.color='#0b0a10';
+  f.innerHTML = `${title}<small>${sub}</small>`; document.body.appendChild(f);
+  try { navigator.vibrate && navigator.vibrate(data.result==='ok'?80:[80,60,80]); } catch(e){}
+  setTimeout(()=>f.remove(), 1500);
+  const log = $('log'); if (log) { if (log.querySelector('p')) log.innerHTML=''; log.insertAdjacentHTML('afterbegin', `<div class="it"><span>${sub}</span><span style="color:${col}">${title.slice(2)}</span></div>`); }
+}
+
+/* ================================================================
+   ADMIN — ganancias de la plataforma
+   ================================================================ */
+async function vAdmin(){
+  if (!profile?.is_admin) { location.hash='#/panel'; return; }
+  loading();
+  const { data, error } = await sb.rpc('platform_summary'); if (error) throw error;
+  const rows = data || []; const tot = rows.reduce((a,r)=>a+Number(r.platform_fee),0), owed = rows.reduce((a,r)=>a+Number(r.owed_to_organizer),0);
+  app().innerHTML = `<a href="#/panel" class="back">‹ Perfil</a>
+  <div class="hero"><h1>Plataforma</h1><p>Lo que ganas con el 2% y lo que debes pagarle a cada organizador.</p></div>
+  <div class="stat" style="margin-top:12px"><div class="card"><small>Tu ganancia (2%)</small><div class="n" style="color:var(--sun)">${COP(tot)}</div></div>
+  <div class="card"><small>Por pagar a organizadores</small><div class="n">${COP(owed)}</div></div></div>
+  <div class="card" style="overflow-x:auto"><table><tr><th>Evento</th><th>Boletas</th><th>2%</th><th>Al organizador</th></tr>
+  ${rows.map(r=>`<tr><td>${esc(r.event)}<br><span class="muted">${esc(r.owner||'')}</span></td><td>${r.tickets}</td><td>${COP(r.platform_fee)}</td><td>${COP(r.owed_to_organizer)}</td></tr>`).join('')}</table></div>`;
+}
+
+/* ---------- arranque ---------- */
+(async () => { await loadSession(); booted = true; route(); })();
+</script>
+</body>
+</html>
