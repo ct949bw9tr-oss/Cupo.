@@ -55,14 +55,20 @@ RPCs (`sb.rpc`) — ver implementación de referencia en `demo/index.html`, obje
 `get_order(p_order,p_token)`, `event_summary(p_event)`, `check_in(p_event,p_code)`, `my_tickets()`,
 `transfer_ticket(p_code,p_email,p_name)` (rota el código de la boleta), `platform_summary()` (solo admin).
 
-Edge Functions (Mercado Pago):
-- `create-order` — body `{slug, code, items:[{ticket_type_id,qty}], name}`. Valida sesión, evento, código privado,
-  disponibilidad y etapas; crea la orden `pending` y una preferencia de Checkout Pro (vence a los 30 min, sin efectivo).
-  Responde `{orderId, token, reference, checkoutUrl}` o `{error}`. El navegador redirige a `checkoutUrl`.
-- Mercado Pago devuelve a `/?o=<orden>&k=<token>&payment_id=...`; el frontend llama `confirm-order` con `{paymentId}`.
-- `mp-webhook` — aviso `payment` de Mercado Pago (se manda vía `notification_url` de cada preferencia). Es la fuente
-  de verdad. Solo toma el id del pago y lo consulta en la API de Mercado Pago con `MP_ACCESS_TOKEN`; luego
-  `finalize_order` (idempotente). Las columnas `wompi_tx_id` / `wompi_status` guardan el id y estado del pago de Mercado Pago.
+Edge Functions (Mercado Pago, split de pagos — migración `20261117070000_mp_marketplace.sql`):
+- Cada organizador conecta su Mercado Pago (OAuth): `mp-connect` (devuelve la URL de autorización, guarda un `state`
+  en `mp_oauth_states`) y `mp-oauth-callback` (cambia el code por tokens y los guarda en `mp_accounts`; vuelve a
+  `/?mp=ok#/panel`). `mp_accounts` solo la lee el servidor. Los tokens se renuevan solos (`_shared/mp.ts`).
+- `create-order` — body `{slug, code, items:[{ticket_type_id,qty}], name}`. Si el dueño del evento conectó su cuenta,
+  crea la preferencia con SU token y `marketplace_fee = platform_fee` (el cargo de Cupo, limpio). Si el dueño es admin
+  sin cuenta conectada, cobra con `MP_ACCESS_TOKEN` (cuenta de Cupo). Si no es admin ni está conectado: error.
+  Guarda `orders.mp_seller_id`. Responde `{orderId, token, reference, checkoutUrl}`; el navegador redirige ahí.
+- Mercado Pago devuelve a `/?o=<orden>&k=<token>&payment_id=...`; el frontend llama `confirm-order`
+  con `{paymentId, orderId, token}`.
+- `mp-webhook` — aviso `payment`; la `notification_url` lleva `?ref=<referencia>`. Es la fuente de verdad: busca la
+  orden, consulta el pago con el token de la cuenta que cobró y llama `finalize_order` (idempotente).
+- Secretos: `MP_ACCESS_TOKEN` (cuenta de Cupo), `MP_CLIENT_ID` y `MP_CLIENT_SECRET` (app de Mercado Pago, para OAuth).
+  En la app de Mercado Pago, la URL de redirección es `https://xlkyrtjtwyzpmjsdokgn.supabase.co/functions/v1/mp-oauth-callback`.
 
 Comisiones (`calc_fees` en SQL y `fees` en la demo): con `fee_mode = 'buyer'` el comprador paga precio + 8 % de Cupo (redondeado hacia arriba a los $100)
 (cargo por servicio, le llega completo a Cupo) y la comisión de Mercado Pago se descuenta del precio de la boleta

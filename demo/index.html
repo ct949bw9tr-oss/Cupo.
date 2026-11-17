@@ -65,6 +65,7 @@ const RPC = {
     return { id:o.id, reference:o.reference, status:o.status, total:o.total, buyer_name:o.buyer_name, qty:o.qty, event:{name:e.name,starts_at:e.starts_at,venue:e.venue,address:e.address||'',spotify_url:e.spotify_url||null,city:e.city,palette:e.palette,cover_url:e.cover_url,slug:e.slug},
       tickets: db.tickets.filter(t=>t.order_id===o.id).map(t=>({code:t.code,type_name:t.type_name,holder_name:t.holder_name,checked_in_at:t.checked_in_at})) }; },
   event_summary: ({p_event}) => summary(p_event),
+  my_mp_status: () => ({ connected:false, is_admin:true }),
   check_in: ({p_event,p_code}) => { const t=db.tickets.find(x=>x.code===String(p_code).trim().toUpperCase()); if(!t||t.event_id!==p_event) return {result:'invalid'};
     if(t.checked_in_at) return {result:'used',holder:t.holder_name,type:t.type_name,at:t.checked_in_at}; t.checked_in_at=new Date().toISOString(); return {result:'ok',holder:t.holder_name,type:t.type_name}; },
   my_tickets: () => db.tickets.filter(t=>myEm() && t.holder_email===myEm()).map(t=>{ const e=db.events.find(x=>x.id===t.event_id);
@@ -611,6 +612,11 @@ async function route(){
   if (stopScanner) { try{ await stopScanner(); }catch(e){} stopScanner = null; }
   closeModal(); setBackdrop(null); setCTA(null);
   const qs = new URLSearchParams(location.search);
+  if (qs.get('mp')) {   // regreso desde Mercado Pago al conectar la cuenta
+    const r = qs.get('mp');
+    toast(r==='ok' ? 'Mercado Pago conectado ✓' : r==='expired' ? 'La conexión tardó mucho. Intenta otra vez.' : 'No se pudo conectar Mercado Pago. Intenta otra vez.');
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
   if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id')); }
   const [a,b,c] = location.hash.replace(/^#\/?/,'').split('/');
   app().classList.toggle('narrow', !['','e'].includes(a||''));
@@ -867,7 +873,7 @@ async function startPayment(){
    ================================================================ */
 async function vOrder(id, k, txId){
   app().innerHTML = '<div class="spin" role="status"></div><p class="muted" style="text-align:center">Confirmando tu pago…</p>';
-  if (txId) { try { await sb.functions.invoke('confirm-order', { body: { paymentId: txId } }); } catch(e){} }
+  if (txId) { try { await sb.functions.invoke('confirm-order', { body: { paymentId: txId, orderId: id, token: k } }); } catch(e){} }
   let o = null;
   for (let i=0;i<20;i++){
     const { data } = await sb.rpc('get_order', { p_order: id, p_token: k });
@@ -961,7 +967,19 @@ async function vPanel(){
   loading();
   const { data: evs, error } = await sb.from('events').select('*, ticket_types(sold,quantity,price)').eq('owner_id', session.user.id).order('starts_at');
   if (error) throw error;
+  const { data: mp } = await sb.rpc('my_mp_status');
+  const mpCard = mp?.connected
+    ? `<div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Cobros <span class="badge on">Mercado Pago conectado</span></h3>
+        <p class="small muted" style="margin-top:6px">La plata de tus ventas te cae directo en tu Mercado Pago. Mercado Pago descuenta su comisión y Cupo su cargo por servicio; lo demás es tuyo y lo retiras desde Mercado Pago.</p>
+        <button class="btn alt sm" style="margin-top:10px" onclick="connectMP()">Volver a conectar</button></div>`
+    : mp?.is_admin
+    ? `<div class="card"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Cobros</h3>
+        <p class="small muted" style="margin-top:6px">Eres administrador: tus eventos cobran con la cuenta de Mercado Pago de Cupo.</p></div>`
+    : `<div class="card" style="border-color:var(--acc)"><h3 style="display:flex;align-items:center;gap:8px">${icon('wallet')} Conecta tu Mercado Pago</h3>
+        <p class="small muted" style="margin-top:6px">Para vender boletas conecta tu cuenta de Mercado Pago. La plata de cada venta te cae directo ahí: Mercado Pago descuenta su comisión y Cupo su cargo por servicio.</p>
+        <button class="btn" style="margin-top:12px" id="mpBtn" onclick="connectMP()">Conectar Mercado Pago</button></div>`;
   app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>${esc(profile.name)}</h1><p>${esc(myEmail())}</p></div>
+    ${mpCard}
     <div class="sec"><div class="row"><h3 style="margin:0">Mis eventos</h3><a class="btn sm" style="flex:none" href="#/nuevo">+ Crear evento</a></div>
     ${evs.length ? evs.map(e=>{const s=e.ticket_types.reduce((a,t)=>a+t.sold,0), q=e.ticket_types.reduce((a,t)=>a+t.quantity,0);
       return `<a class="ev mini" href="#/evento/${e.id}" style="margin:14px 0">${poster(e)}
@@ -970,6 +988,15 @@ async function vPanel(){
     ${profile?.is_admin?`<a class="btn alt" href="#/admin" style="margin-top:10px">${icon('wallet')} Ganancias de la plataforma</a>`:''}
     <button class="btn alt" style="margin-top:10px" onclick="editName()">Cambiar mi nombre</button>
     <button class="btn alt" style="margin-top:10px" onclick="sb.auth.signOut()">Cerrar sesión</button>`;
+}
+async function connectMP(){
+  if (CFG.DEMO) return toast('En la vista de prueba no se conecta Mercado Pago.');
+  const b = $('mpBtn'); if (b) { b.disabled = true; b.textContent = 'Abriendo Mercado Pago…'; }
+  const { data, error } = await sb.functions.invoke('mp-connect');
+  let msg = data?.error;
+  if (error && !msg) { try { msg = (await error.context.json()).error; } catch(e) { msg = 'No se pudo abrir Mercado Pago.'; } }
+  if (msg || !data?.url) { toast(msg || 'No se pudo abrir Mercado Pago.'); if (b) { b.disabled = false; b.textContent = 'Conectar Mercado Pago'; } return; }
+  location.href = data.url;
 }
 function editName(){
   modal(`<h2>Tu nombre</h2><form onsubmit="event.preventDefault();saveName2()"><input id="nm2" value="${esc(profile.name||'')}" style="margin-top:14px" minlength="3" required><button class="btn" style="margin-top:14px">Guardar</button></form>`);
@@ -1083,7 +1110,7 @@ function drawEdit(){
     <div class="row"><button class="btn alt sm" onclick="addStage()">+ Siguiente etapa</button><button class="btn alt sm" onclick="syncEd();ED.tiers.push({name:'VIP',price:150000,quantity:50,sold:0,unlock_idx:-1,end_date:''});drawEdit()">+ Otro tipo (VIP, mesa…)</button></div>
     <label>¿Quién paga el cargo por servicio?</label>
     <div class="seg"><button class="${e.fee_mode==='buyer'?'on':''}" onclick="syncEd();ED.fee_mode='buyer';drawEdit()">El comprador</button><button class="${e.fee_mode==='organizer'?'on':''}" onclick="syncEd();ED.fee_mode='organizer';drawEdit()">Yo (organizador)</button></div>
-    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (8%) encima del precio. La comisión de Mercado Pago se descuenta del precio de cada boleta.':'El comprador paga el precio exacto; el cargo de Cupo (8%) y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
+    <p class="note">${e.fee_mode==='buyer'?'El comprador paga el cargo por servicio de Cupo (8%) encima del precio. Las ventas te caen directo en tu Mercado Pago, menos la comisión de Mercado Pago.':'El comprador paga el precio exacto; el cargo de Cupo (8%) y la comisión de Mercado Pago se descuentan de lo que recibes.'}</p>
   </div>
   <button class="btn" id="saveBtn" onclick="saveEvent()">${e.id?'Guardar cambios':'Publicar evento'}</button>
   ${e.id?`<button class="btn alt" style="margin-top:10px" onclick="askDelete()">Eliminar evento</button>`:''}`;
