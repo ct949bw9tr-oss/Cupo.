@@ -174,6 +174,9 @@ nav.tabs a:hover{color:var(--txt)}
 .ticket .q::before{left:-13px}.ticket .q::after{right:-13px}
 .ticket .qr{background:#fff;padding:9px;border-radius:16px;flex:none;line-height:0;width:138px;height:138px}
 .ticket .qr img,.ticket .qr canvas{display:block}
+.paybox{background:#111115;border:1px solid var(--line);border-radius:var(--r);padding:6px;min-height:220px;margin-top:14px}
+.paynote{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:12.5px;color:var(--mut)}
+.paynote svg{width:16px;height:16px;flex:none;margin-top:1px}
 .wallet{display:flex;align-items:center;justify-content:center;gap:10px;margin:0 20px 4px;min-height:50px;border-radius:12px;background:#000;color:#fff;text-decoration:none;border:1px solid #3a3a42;font-weight:600;font-size:17px;line-height:1.05;letter-spacing:-.01em}
 .wallet small{display:block;font-size:11px;font-weight:500;opacity:.85}
 .wallet svg{width:26px;height:26px}
@@ -697,6 +700,7 @@ async function startPayment(){
   closeModal();
   if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
     if (!data.checkoutUrl) { toast('No se pudo iniciar el pago. Intenta otra vez.'); return; }
+    if ((data.publicKey || CFG.MP_PUBLIC_KEY) && data.amount) return openPay(data);   // formulario dentro de Cupo
     location.href = data.checkoutUrl; return;   // página de pago de Mercado Pago
   }
   // Solo en el demo: pago simulado
@@ -740,6 +744,84 @@ async function vOrder(id, k, txId){
     <a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
     ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}
     <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;
+}
+
+/* ================================================================
+   PAGO DENTRO DE CUPO (formulario de Mercado Pago: tarjeta y PSE)
+   Apple Pay y otros medios siguen en la página de Mercado Pago (checkoutUrl).
+   ================================================================ */
+let PAY = null, MPJS = null, BRICK = null, PAYING = false;
+const MP_SDK = 'https://sdk.mercadopago.com/js/v2';
+const goOrder = pid => { location.href = `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}${pid?'&payment_id='+encodeURIComponent(pid):''}`; };
+async function openPay(data){
+  PAY = data; setCTA(null);
+  app().innerHTML = `<a class="back" href="#/e/${esc(EV.slug)}${EV_CODE?'/'+esc(EV_CODE):''}">${icon('back')} Volver</a>
+    <div class="hero" style="margin-top:6px"><h1>Pagar</h1><p>${esc(EV.name)} · <b style="color:var(--txt)">${COP(data.amount)}</b></p></div>
+    <div id="payBox" class="paybox"><div class="spin" role="status"></div><p class="muted small" style="text-align:center">Cargando el pago seguro…</p></div>
+    <div id="pay3ds"></div>
+    <div class="paynote">${icon('lock')}<span>Pago procesado por Mercado Pago. ${esc(APP)} no ve ni guarda los datos de tu tarjeta.</span></div>
+    <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar con Apple Pay u otros medios</a>
+    <p class="note" style="text-align:center">¿Pagas con débito y no te pasa? Usa PSE.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
+  window.scrollTo(0, 0);
+  try {
+    await loadScript(MP_SDK);
+    const pk = data.publicKey || CFG.MP_PUBLIC_KEY;
+    if (!MPJS || MPJS._pk !== pk) { MPJS = new MercadoPago(pk, { locale: 'es-CO' }); MPJS._pk = pk; }
+    await renderBrick();
+  } catch (e) {
+    console.error(e); toast('No se pudo cargar el pago aquí. Te llevamos a Mercado Pago.');
+    setTimeout(() => { location.href = data.checkoutUrl; }, 1200);
+  }
+}
+async function renderBrick(){
+  const box = $('payBox'); if (!box) return;
+  if (BRICK) { try { BRICK.unmount(); } catch(e){} BRICK = null; }
+  box.innerHTML = '';
+  const nm = (profile?.name || '').trim().split(/\s+/);
+  BRICK = await MPJS.bricks().create('payment', 'payBox', {
+    initialization: { amount: PAY.amount, payer: { email: myEmail(), firstName: nm[0] || '', lastName: nm.slice(1).join(' ') } },
+    customization: {
+      paymentMethods: { creditCard: 'all', debitCard: 'all', bankTransfer: 'all', maxInstallments: 12 },
+      visual: { style: { theme: 'dark', customVariables: {
+        baseColor: '#c8ff3d', buttonTextColor: '#0c1200', formBackgroundColor: '#111115', inputBackgroundColor: '#1a1a20',
+        textPrimaryColor: '#f4f4f6', textSecondaryColor: '#a1a1aa', outlinePrimaryColor: '#34343f', outlineSecondaryColor: '#25252d',
+        borderRadiusSmall: '10px', borderRadiusMedium: '12px', borderRadiusLarge: '16px' } } },
+    },
+    callbacks: {
+      onReady: () => {},
+      onError: err => console.error('Brick', err),
+      onSubmit: ({ formData }) => submitPay(formData),
+    },
+  });
+}
+async function submitPay(formData){
+  if (PAYING) return; PAYING = true;
+  let r = null;
+  try {
+    const { data, error } = await sb.functions.invoke('pay-order', { body: { orderId: PAY.orderId, token: PAY.token, formData } });
+    r = data;
+    if (error && !r?.error) { try { r = await error.context.json(); } catch(e) { r = { error: 'No se pudo procesar el pago.' }; } }
+  } catch (e) { r = { error: 'Sin conexión. Revisa tu internet e intenta otra vez.' }; }
+  finally { PAYING = false; }
+  if (r?.redirectUrl) { location.href = r.redirectUrl; return; }           // PSE: página del banco
+  if (r?.status === 'approved') return goOrder(r.paymentId);
+  if (r?.challenge) return show3ds(r);                                     // verificación del banco
+  if (r?.status === 'in_process' || r?.status === 'pending') return goOrder(r.paymentId);
+  toast(r?.error || 'El pago no pasó. Intenta otra vez.');
+  await renderBrick();                                                     // formulario limpio para reintentar
+}
+async function show3ds(r){
+  if (BRICK) { try { BRICK.unmount(); } catch(e){} BRICK = null; }
+  $('payBox').innerHTML = '';
+  $('pay3ds').innerHTML = `<p class="note" style="margin-top:0">Tu banco pide confirmar el pago. Sigue los pasos y luego toca "Ver mi compra".</p>
+    <div id="payStatus"></div><button class="btn" style="margin-top:14px" onclick="goOrder('${esc(r.paymentId)}')">Ver mi compra</button>`;
+  try {
+    await MPJS.bricks().create('statusScreen', 'payStatus', {
+      initialization: { paymentId: r.paymentId, additionalInfo: { externalResourceURL: r.challenge.url, creq: r.challenge.creq } },
+      customization: { visual: { style: { theme: 'dark' } }, backUrls: { return: `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}&payment_id=${r.paymentId}` } },
+      callbacks: { onReady: () => {}, onError: err => console.error('3DS', err) },
+    });
+  } catch (e) { console.error(e); }
 }
 
 /* ================================================================

@@ -88,5 +88,15 @@ Deno.serve(async (req) => {
   }
   const pref = await res.json();
   const checkoutUrl = mpToken.startsWith("TEST-") ? (pref.sandbox_init_point || pref.init_point) : pref.init_point;
-  return json({ orderId: data.orderId, token: data.token, reference: data.reference, checkoutUrl });
+  // Para el formulario dentro de Cupo (Payment Brick): monto y llave pública de la cuenta que cobra.
+  // La llave pública es pública por diseño; si cobra Cupo, el navegador usa la de config.js.
+  let publicKey: string | null = null;
+  if (split) {
+    const { data: acc } = await admin.from("mp_accounts").select("public_key").eq("owner_id", ev.owner_id).maybeSingle();
+    publicKey = acc?.public_key ?? null;
+  }
+  return json({
+    orderId: data.orderId, token: data.token, reference: data.reference, checkoutUrl,
+    amount: Number(data.amountInCents) / 100, preferenceId: pref.id, publicKey, split,
+  });
 });
