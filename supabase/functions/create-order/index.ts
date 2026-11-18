@@ -18,13 +18,17 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
 
   const admin = adminClient();
-  const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  const { data: u, error: authErr } = await admin.auth.getUser(jwt);
-  if (authErr || !u?.user) return json({ error: "Entra con tu correo para comprar." }, 401);
-
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Solicitud inválida." }, 400); }
   const slug = String(body?.slug ?? "");
+
+  // Con sesión: la orden queda a su cuenta. Sin sesión: compra como invitado con nombre y correo
+  // (las boletas quedan a ese correo y las ve si después entra a Cupo con él).
+  const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const { data: u } = await admin.auth.getUser(jwt).catch(() => ({ data: null as any }));
+  const userId: string | null = u?.user?.id ?? null;
+  const guestEmail = userId ? null : String(body?.email ?? "").trim().toLowerCase();
+  if (!userId && !guestEmail) return json({ error: "Escribe tu correo para recibir tus boletas." }, 400);
 
   // ¿Con qué cuenta de Mercado Pago se cobra este evento?
   const { data: ev } = await admin.from("events").select("id, name, owner_id").eq("slug", slug).maybeSingle();
@@ -35,11 +39,12 @@ Deno.serve(async (req) => {
   if (!mpToken) return json({ error: "Pagos sin configurar todavía." }, 500);
 
   const { data, error } = await admin.rpc("create_order_internal", {
-    p_user: u.user.id,
+    p_user: userId,
     p_slug: slug,
     p_code: body?.code ? String(body.code) : null,
     p_items: Array.isArray(body?.items) ? body.items : [],
     p_name: String(body?.name ?? ""),
+    p_email: guestEmail,
   });
   if (error) { console.error(error); return json({ error: "No se pudo crear la orden." }, 500); }
   if (data?.error) return json({ error: data.error });

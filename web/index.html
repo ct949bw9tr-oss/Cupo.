@@ -689,24 +689,51 @@ function updSum(){
     $('sum').innerHTML = `<div><span>${n} boleta${n===1?'':'s'}</span><span>${COP(sub)}</span></div>
       ${service>0?`<div><span>Cargo por servicio</span><span>${COP(service)}</span></div>`:''}
       <div class="t"><span>Total</span><span>${COP(f.total)}</span></div>`;
-    btn.textContent = (session ? 'Pagar ' : 'Entrar y pagar ') + COP(f.total);
+    btn.textContent = 'Pagar ' + COP(f.total);
   }, 120);
 }
 function shareEvent(){
   const url = eventURL(EV.slug, EV_CODE);
   if (navigator.share) navigator.share({ title: EV.name, url }).catch(()=>{}); else copy(url);
 }
+/* Compra como invitado: sin cuenta, solo nombre y correo (las boletas quedan a ese correo) */
+let GUEST = null;
+try { GUEST = JSON.parse(localStorage.getItem('cupo_guest') || 'null'); } catch(e) {}
+function goLoginToBuy(){
+  try { sessionStorage.setItem('cupo_after', location.hash); sessionStorage.setItem('cupo_cart', JSON.stringify(CART)); } catch(e){}
+  closeModal(); setCTA(null); setBackdrop(null); vLogin();
+}
+function openGuest(){
+  const g = GUEST || { name:'', email:'' };
+  modal(`<h2>¿A nombre de quién?</h2><p class="muted small" style="margin-top:4px">No necesitas cuenta. Tu boleta con QR te sale apenas pagues.</p>
+  <form onsubmit="event.preventDefault();guestContinue()">
+    <label for="gName">Nombre y apellido</label><input id="gName" autocomplete="name" required minlength="3" placeholder="Como aparece en tu cédula" value="${esc(g.name)}">
+    <label for="gEm">Correo</label><input id="gEm" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" required placeholder="tucorreo@gmail.com" value="${esc(g.email)}">
+    <p class="note">Revisa bien el correo: con él puedes volver a ver tus boletas cuando quieras.</p>
+    <button class="btn" id="gBtn" style="margin-top:14px">Continuar al pago</button></form>
+  <button class="btn alt" style="margin-top:10px" onclick="goLoginToBuy()">Ya tengo cuenta: entrar con mi correo</button>`);
+  setTimeout(()=>$('gName')?.focus(), 50);
+}
+function guestContinue(){
+  const name = $('gName').value.trim().replace(/\s+/g,' '), email = $('gEm').value.trim().toLowerCase();
+  if (name.length < 3 || !name.includes(' ')) return toast('Escribe tu nombre y apellido');
+  if (!EMAIL_RE.test(email)) return toast('Revisa el correo');
+  GUEST = { name, email }; try { localStorage.setItem('cupo_guest', JSON.stringify(GUEST)); } catch(e){}
+  startPayment();
+}
 async function startPayment(){
-  if (!session || !profile?.name) {
+  if (!session) { if (!$('gBtn')) return openGuest(); }
+  else if (!profile?.name) {
     try { sessionStorage.setItem('cupo_after', location.hash); sessionStorage.setItem('cupo_cart', JSON.stringify(CART)); } catch(e){}
-    closeModal(); setCTA(null); setBackdrop(null); return session ? vName() : vLogin();
+    closeModal(); setCTA(null); setBackdrop(null); return vName();
   }
-  const btn = $('buyBtn'); btn.disabled = true; btn.textContent = 'Un momento…';
+  const btn = $('buyBtn') || $('gBtn'); btn.disabled = true; btn.textContent = 'Un momento…';
   const items = Object.entries(CART).filter(([,q])=>q>0).map(([ticket_type_id,qty])=>({ticket_type_id,qty}));
-  const { data, error } = await sb.functions.invoke('create-order', { body: { slug: EV.slug, code: EV_CODE, items, name: profile.name } });
+  const buyer = session ? { name: profile.name } : { name: GUEST.name, email: GUEST.email };
+  const { data, error } = await sb.functions.invoke('create-order', { body: { slug: EV.slug, code: EV_CODE, items, ...buyer } });
   let msg = data?.error;
   if (error && !msg) { try { msg = (await error.context.json()).error; } catch(e) { msg = 'No se pudo iniciar el pago.'; } }
-  if (msg) { toast(msg); btn.disabled=false; updSum(); return; }
+  if (msg) { toast(msg); btn.disabled=false; if ($('buyBtn')) updSum(); else btn.textContent = 'Continuar al pago'; return; }
   rememberOrder({ id: data.orderId, k: data.token, name: EV.name, at: EV.starts_at });
   closeModal();
   if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
@@ -750,11 +777,19 @@ async function vOrder(id, k, txId){
       <p>Si ya pagaste, tus boletas aparecen en "Boletas" en unos minutos.</p></div>
       <button class="btn" style="margin-top:20px" onclick="location.reload()">Actualizar</button>`; return;
   }
+  const tix = o.tickets || [];
   app().innerHTML = `<div class="hero c">${orb('check','ok')}<h1>¡Estás dentro!</h1>
-    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>. Quedaron guardadas en tu cuenta de ${APP}.</p></div>
-    <a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
-    ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}
+    <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>.${session ? ` Quedaron guardadas en tu cuenta de ${APP}.` : ''}</p></div>
+    ${tix.map((t,i)=>`<div class="ticket" style="margin-top:16px"><div class="q"><div class="qr" id="oqr_${i}"></div><div style="min-width:0">
+      <div class="small muted">${esc(t.type_name)}</div><b style="font-size:16px">${esc(t.holder_name)}</b><div class="code" style="margin-top:8px">${esc(t.code)}</div>
+      <div class="status" style="color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'Ya entró':'Lista para entrar'}</div></div></div></div>`).join('')}
+    ${session
+      ? `<a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
+         ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}`
+      : `<p class="note" style="text-align:center;margin-top:18px">Toma pantallazo de tu QR. Para volver a verlo cuando quieras, entra a ${esc(APP)} con <b style="color:var(--txt)">${esc(o.buyer_email||'tu correo')}</b>.</p>
+         <a class="btn alt" style="margin-top:12px" href="${siteURL()}#/boletas">Entrar con mi correo</a>`}
     <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;
+  tix.forEach((t,i)=>{ try { new QRCode($('oqr_'+i), { text: t.code, width:120, height:120, correctLevel: QRCode.CorrectLevel.M }); } catch(e){} });
 }
 
 /* ================================================================
@@ -788,9 +823,9 @@ async function renderBrick(){
   const box = $('payBox'); if (!box) return;
   if (BRICK) { try { BRICK.unmount(); } catch(e){} BRICK = null; }
   box.innerHTML = '';
-  const nm = (profile?.name || '').trim().split(/\s+/);
+  const nm = (profile?.name || GUEST?.name || '').trim().split(/\s+/);
   BRICK = await MPJS.bricks().create('payment', 'payBox', {
-    initialization: { amount: PAY.amount, payer: { email: myEmail(), firstName: nm[0] || '', lastName: nm.slice(1).join(' ') } },
+    initialization: { amount: PAY.amount, payer: { email: myEmail() || GUEST?.email || '', firstName: nm[0] || '', lastName: nm.slice(1).join(' ') } },
     customization: {
       paymentMethods: { creditCard: 'all', debitCard: 'all', bankTransfer: 'all', maxInstallments: 12 },
       visual: { style: { theme: 'dark', customVariables: {
