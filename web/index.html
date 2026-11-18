@@ -806,8 +806,8 @@ async function openPay(data){
     <div id="payBox" class="paybox"><div class="spin" role="status"></div><p class="muted small" style="text-align:center">Cargando el pago seguro…</p></div>
     <div id="pay3ds"></div>
     <div class="paynote">${icon('lock')}<span>Pago procesado por Mercado Pago. ${esc(APP)} no ve ni guarda los datos de tu tarjeta.</span></div>
-    <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar con PSE, Bancolombia o Apple Pay</a>
-    <p class="note" style="text-align:center">¿Tu débito no pasa? Paga con <b style="color:var(--txt)">PSE</b> en el botón de arriba: sale directo de tu cuenta.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
+    <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar en Mercado Pago (PSE, tarjeta o Apple Pay)</a>
+    <p class="note" style="text-align:center">¿Tu tarjeta no pasa aquí? Toca el botón de arriba y paga en Mercado Pago, o usa <b style="color:var(--txt)">PSE</b>: sale directo de tu cuenta.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
   window.scrollTo(0, 0);
   try {
     // Huella del dispositivo para el antifraude de Mercado Pago (deja window.MP_DEVICE_SESSION_ID)
