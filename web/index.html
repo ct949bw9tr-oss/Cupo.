@@ -1057,8 +1057,8 @@ async function vDashboard(id){
   <div class="stat">
     <div class="card"><small>Boletas vendidas</small><div class="n">${s.tickets}<span class="small muted"> / ${e.ticket_types.reduce((a,t)=>a+t.quantity,0)}</span></div><div class="bar"><i style="width:${Math.min(100,Math.round(s.tickets/Math.max(1,e.ticket_types.reduce((a,t)=>a+t.quantity,0))*100))}%"></i></div></div>
     <div class="card"><small>Han entrado</small><div class="n">${s.checked_in}<span class="small muted"> / ${s.tickets}</span></div><div class="bar"><i style="width:${s.tickets?Math.round(s.checked_in/s.tickets*100):0}%;background:var(--ok)"></i></div></div>
-    <div class="card"><small>Tú recibes</small><div class="n" style="color:var(--ok)">${COP(s.organizer_net)}</div></div>
-    <div class="card"><small>Pagado por compradores</small><div class="n">${COP(s.gross)}</div></div>
+    <div class="card"><small>Personas que pagaron</small><div class="n">${s.orders}</div></div>
+    <div class="card"><small>Tú recibes</small><div class="n" style="color:var(--ok)">${COP(s.organizer_net)}</div><div class="small muted">de ${COP(s.gross)} pagados</div></div>
   </div>
   <div class="row" style="margin-top:12px">
     <a class="btn" href="#/scan/${e.id}">${icon('camera')} Escanear entrada</a>
@@ -1077,6 +1077,9 @@ async function vDashboard(id){
     ${e.ticket_types.sort((a,b)=>a.sort-b.sort||a.price-b.price).map(t=>{const prev=e.ticket_types.find(x=>x.id===t.unlock_after);
       const st = t.sales_end && new Date(t.sales_end)<new Date() ? 'Cerrada' : t.sold>=t.quantity ? 'Agotada' : (prev && prev.sold<prev.quantity && !(prev.sales_end&&new Date(prev.sales_end)<new Date())) ? 'En espera' : 'A la venta';
       return `<div class="it"><span>${esc(t.name)} · ${COP(t.price)}<span class="badge ${st==='A la venta'?'on':st==='Agotada'?'warn':''}">${st}</span>${prev?`<br><span class="small muted">Se abre después de ${esc(prev.name)}</span>`:''}</span><span class="muted">${t.sold}/${t.quantity}</span></div>`}).join('')}</div></div>
+  <div class="card"><h3>Compradores (${(orders||[]).length})</h3><p class="small muted" style="margin-top:4px">Solo tú ves esta lista.</p>
+    <div class="list" style="margin-top:6px">${(orders||[]).length?orders.map(o=>`<div class="it"><span>${esc(o.buyer_name)}<br><span class="small muted" style="overflow-wrap:anywhere">${esc(o.buyer_email||'')}</span></span>
+      <span class="small" style="text-align:right">${o.qty} boleta${o.qty===1?'':'s'}<br><span class="muted">${COP(o.total)} · ${new Date(o.created_at).toLocaleDateString('es-CO',{day:'numeric',month:'short'})}</span></span></div>`).join(''):'<p class="muted small">Nadie ha pagado todavía.</p>'}</div></div>
   <div class="card"><div class="row"><h3>Asistentes (${tickets.length})</h3>${tickets.length?'<button class="btn alt sm" style="flex:none" onclick="exportCSV()">Descargar Excel</button>':''}</div>
     <input placeholder="Buscar nombre o código" aria-label="Buscar asistente" style="margin-top:10px" oninput="filterAtt(this.value)">
     <div class="list" id="att" style="margin-top:6px">${tickets.length?tickets.map(t=>{
