@@ -66,7 +66,9 @@ Deno.serve(async (req) => {
   if (!order) return json({ error: "Orden no encontrada." }, 404);
 
   const code = String(d.x_cod_response ?? d.x_cod_transaction_state ?? "");
-  const status = STATUS[code] ?? "PENDING";
+  // Un pago de PRUEBA de ePayco nunca emite boletas (si no, se podrían sacar boletas gratis)
+  const isTest = String(d.x_test_request ?? "").toUpperCase() === "TRUE";
+  const status = isTest ? "PENDING" : (STATUS[code] ?? "PENDING");
   const { data, error } = await admin.rpc("finalize_order", {
     p_reference: reference,
     p_tx_id: `epayco:${refPayco}`,
