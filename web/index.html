@@ -7,9 +7,9 @@
 <meta name="description" content="Boletas para los mejores planes de Barranquilla. Compra, recibe tu QR y pásale boletas a tus amigos.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cupo">
-<meta property="og:title" content="Throwback 2016-2018 · Salvaje · 19 dic">
+<meta property="og:title" content="Throwback 2016-2018 · Salvaje · 22 dic">
 <meta property="og:description" content="Day party con DJ Phantom, 5 PM a 1 AM, 2x1 en cócteles. Compra tu boleta en Cupo.">
-<meta property="og:image" content="https://cupo-beryl.vercel.app/covers/throwback-2016-2018.jpg">
+<meta property="og:image" content="https://cupo-beryl.vercel.app/covers/throwback-2016-2018-22dic.jpg">
 <meta property="og:image:width" content="1080">
 <meta property="og:image:height" content="1350">
 <meta property="og:url" content="https://cupo-beryl.vercel.app/">
@@ -641,7 +641,6 @@ async function vEvent(slug, code){
   <div class="infos">
     <div class="info"><div class="ic date">${o({month:'short'}).replace('.','')}<b>${o({day:'numeric'})}</b></div><div><div class="t1">${cap1(o({weekday:'long'}))}, ${o({day:'numeric',month:'long'})}</div><div class="t2">${o({hour:'numeric',minute:'2-digit'})}</div></div></div>
     <div class="info"><div class="ic">${icon('pin')}</div><div><div class="t1">${esc(e.venue)}</div><div class="t2">${e.hide_address&&!e.address?'Dirección al comprar':esc([e.address,e.city].filter(Boolean).join(', '))}</div></div></div>
-    ${e.host?`<div class="info"><div class="ic host">${esc(e.host[0].toUpperCase())}</div><div><div class="t2">Organiza</div><div class="t1">${esc(e.host)}</div></div></div>`:''}
   </div>
   ${e.description?`<div class="sec"><h3>Sobre el evento</h3><p class="desc">${esc(e.description)}</p></div>`:''}
   <div>${musicCard(e)}</div>
