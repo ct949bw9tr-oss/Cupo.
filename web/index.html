@@ -806,10 +806,12 @@ async function openPay(data){
     <div id="payBox" class="paybox"><div class="spin" role="status"></div><p class="muted small" style="text-align:center">Cargando el pago seguro…</p></div>
     <div id="pay3ds"></div>
     <div class="paynote">${icon('lock')}<span>Pago procesado por Mercado Pago. ${esc(APP)} no ve ni guarda los datos de tu tarjeta.</span></div>
-    <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar con Apple Pay u otros medios</a>
-    <p class="note" style="text-align:center">¿Pagas con débito y no te pasa? Usa PSE.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
+    <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar con PSE, Bancolombia o Apple Pay</a>
+    <p class="note" style="text-align:center">¿Tu débito no pasa? Paga con <b style="color:var(--txt)">PSE</b> en el botón de arriba: sale directo de tu cuenta.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
   window.scrollTo(0, 0);
   try {
+    // Huella del dispositivo para el antifraude de Mercado Pago (deja window.MP_DEVICE_SESSION_ID)
+    if (!document.querySelector('script[data-mp-sec]')) { const sc = document.createElement('script'); sc.src = 'https://www.mercadopago.com/v2/security.js'; sc.setAttribute('view','checkout'); sc.setAttribute('output','deviceId'); sc.dataset.mpSec = '1'; document.head.appendChild(sc); }
     await loadScript(MP_SDK);
     const pk = data.publicKey || CFG.MP_PUBLIC_KEY;
     if (!MPJS || MPJS._pk !== pk) { MPJS = new MercadoPago(pk, { locale: 'es-CO' }); MPJS._pk = pk; }
@@ -827,7 +829,7 @@ async function renderBrick(){
   BRICK = await MPJS.bricks().create('payment', 'payBox', {
     initialization: { amount: PAY.amount, payer: { email: myEmail() || GUEST?.email || '', firstName: nm[0] || '', lastName: nm.slice(1).join(' ') } },
     customization: {
-      paymentMethods: { creditCard: 'all', debitCard: 'all', bankTransfer: 'all', maxInstallments: 12 },
+      paymentMethods: { creditCard: 'all', debitCard: 'all', maxInstallments: 12 },   // PSE va por la página de Mercado Pago
       visual: { style: { theme: 'dark', customVariables: {
         baseColor: '#c8ff3d', buttonTextColor: '#0c1200', formBackgroundColor: '#111115', inputBackgroundColor: '#1a1a20',
         textPrimaryColor: '#f4f4f6', textSecondaryColor: '#a1a1aa', outlinePrimaryColor: '#34343f', outlineSecondaryColor: '#25252d',
@@ -844,7 +846,7 @@ async function submitPay(formData){
   if (PAYING) return; PAYING = true;
   let r = null;
   try {
-    const { data, error } = await sb.functions.invoke('pay-order', { body: { orderId: PAY.orderId, token: PAY.token, formData } });
+    const { data, error } = await sb.functions.invoke('pay-order', { body: { orderId: PAY.orderId, token: PAY.token, formData, deviceId: window.MP_DEVICE_SESSION_ID || window.deviceId || '' } });
     r = data;
     if (error && !r?.error) { try { r = await error.context.json(); } catch(e) { r = { error: 'No se pudo procesar el pago.' }; } }
   } catch (e) { r = { error: 'Sin conexión. Revisa tu internet e intenta otra vez.' }; }

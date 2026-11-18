@@ -42,11 +42,12 @@ Deno.serve(async (req) => {
   try { b = await req.json(); } catch { /* vacío */ }
   const orderId = String(b?.orderId ?? ""), token = String(b?.token ?? "");
   const fd = b?.formData ?? {};
+  const deviceId = String(b?.deviceId ?? "").replace(/[^\w-]/g, "").slice(0, 100);
   if (!UUID.test(orderId) || !UUID.test(token) || typeof fd !== "object") return json({ error: "Solicitud inválida." }, 400);
 
   const admin = adminClient();
   const { data: order } = await admin.from("orders")
-    .select("id, reference, total, status, platform_fee, mp_seller_id, created_at, buyer_email, qty, event_id")
+    .select("id, reference, total, status, platform_fee, mp_seller_id, created_at, buyer_email, buyer_name, qty, event_id")
     .eq("id", orderId).eq("token", token).maybeSingle();
   if (!order) return json({ error: "Orden no encontrada." }, 404);
   if (order.status === "paid") return json({ status: "approved" });
@@ -63,6 +64,12 @@ Deno.serve(async (req) => {
   const method = String(fd.payment_method_id ?? "");
   const email = String(fd.payer?.email || order.buyer_email || "").trim().toLowerCase();
 
+  // Datos para el antifraude de Mercado Pago: sin nombre ni detalle de la compra rechaza más tarjetas.
+  const nm = String(order.buyer_name || "").trim().split(/\s+/);
+  const firstName = nm[0] || "", lastName = nm.slice(1).join(" ") || nm[0] || "";
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || req.headers.get("cf-connecting-ip") || "";
+  const title = `Boleta · ${ev?.name ?? "Cupo"}`.slice(0, 250);
+
   const payment: Record<string, unknown> = {
     transaction_amount: Number(order.total),
     description: `${order.qty} boleta${order.qty === 1 ? "" : "s"} · ${ev?.name ?? "Cupo"}`.slice(0, 250),
@@ -71,6 +78,12 @@ Deno.serve(async (req) => {
     statement_descriptor: "CUPO",
     payment_method_id: method,
     metadata: { order_id: order.id },
+    additional_info: {
+      items: [{ id: order.reference, title, description: title, category_id: "tickets",
+                quantity: 1, unit_price: Number(order.total) }],
+      payer: { first_name: firstName, last_name: lastName },
+      ...(ip ? { ip_address: ip } : {}),
+    },
   };
   if (order.mp_seller_id) payment.application_fee = Number(order.platform_fee ?? 0);   // cargo de Cupo (split)
 
@@ -86,15 +99,15 @@ Deno.serve(async (req) => {
       ...(p.phone ? { phone: p.phone } : {}),
     };
     payment.transaction_details = { financial_institution: String(fd.transaction_details.financial_institution) };
-    const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || req.headers.get("cf-connecting-ip") || "127.0.0.1";
-    payment.additional_info = { ip_address: ip };
+    (payment.additional_info as Record<string, unknown>).ip_address = ip || "127.0.0.1";
     payment.callback_url = `${site}/?o=${order.id}&k=${token}`;
   } else {
     if (!fd.token) return json({ error: "Faltan los datos de la tarjeta." }, 400);
     payment.token = String(fd.token);
     payment.installments = Math.max(1, Number(fd.installments) || 1);
     if (fd.issuer_id) payment.issuer_id = Number(fd.issuer_id) || fd.issuer_id;
-    payment.payer = { email, ...(fd.payer?.identification?.number ? { identification: fd.payer.identification } : {}) };
+    payment.payer = { email, first_name: firstName, last_name: lastName,
+      ...(fd.payer?.identification?.number ? { identification: fd.payer.identification } : {}) };
     payment.three_d_secure_mode = "optional";
   }
 
@@ -105,6 +118,8 @@ Deno.serve(async (req) => {
       "Content-Type": "application/json",
       // Un intento por token de tarjeta (o por clic en PSE): evita cobrar dos veces el mismo intento
       "X-Idempotency-Key": `${order.reference}-${String(fd.token || crypto.randomUUID()).slice(0, 60)}`,
+      // Huella del dispositivo que genera MercadoPago.js (mejora la aprobación del antifraude)
+      ...(deviceId ? { "X-meli-session-id": deviceId } : {}),
     },
     body: JSON.stringify(payment),
   });
@@ -115,6 +130,7 @@ Deno.serve(async (req) => {
     return json({ error: "Mercado Pago no aceptó el pago. Revisa los datos e intenta otra vez.", detail: String(cause).slice(0, 200) }, 400);
   }
 
+  console.log("pay-order", order.reference, method, p.payment_type_id, p.status, p.status_detail);
   const out: Record<string, unknown> = { paymentId: String(p.id), status: p.status, statusDetail: p.status_detail };
   if (p.status === "approved") {
     await syncOrderPayment(admin, order, String(p.id));   // crea las boletas ya (el webhook también lo hace)
