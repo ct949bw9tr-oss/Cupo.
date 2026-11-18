@@ -738,7 +738,7 @@ async function startPayment(){
   closeModal();
   if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
     if (!data.checkoutUrl) { toast('No se pudo iniciar el pago. Intenta otra vez.'); return; }
-    if ((data.publicKey || CFG.MP_PUBLIC_KEY) && data.amount) return openPay(data);   // formulario dentro de Cupo
+    if (CFG.MP_BRICK && (data.publicKey || CFG.MP_PUBLIC_KEY) && data.amount) return openPay(data);   // formulario dentro de Cupo (apagado: se paga en Mercado Pago)
     location.href = data.checkoutUrl; return;   // página de pago de Mercado Pago
   }
   // Solo en el demo: pago simulado

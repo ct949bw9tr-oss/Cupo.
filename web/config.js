@@ -10,5 +10,6 @@ window.CUPO_CONFIG = {
   EPAYCO_TEST: false, // true = modo pruebas de ePayco (los pagos de prueba NO emiten boletas)
   EPAYCO_PUBLIC_KEY: "e7d3470d0b9817ca6f55406528450617",
   APPLE_WALLET: false, // true cuando los certificados de Apple estén en Supabase (función wallet-pass)
+  MP_BRICK: false, // true = formulario de pago dentro de Cupo; false = página de Mercado Pago (más confiable)
   MP_PUBLIC_KEY: "APP_USR-e3a6a992-2633-41ba-8ccd-fe155d074589", // Public Key de producción de Mercado Pago (cuenta de Cupo). Vacío = pagar en la página de Mercado Pago
 };
