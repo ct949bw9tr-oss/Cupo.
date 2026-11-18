@@ -4,10 +4,10 @@
 -- Contra abusos (apartar boletas sin pagar): máximo 3 órdenes pendientes por correo cada 30 minutos
 -- y máximo 10 boletas por tipo en una compra de invitado.
 
-drop function if exists public.create_order_internal(uuid, text, text, jsonb, text);
+-- La versión vieja de 5 parámetros queda en la base sin usarse (create-order siempre manda p_email).
 
 create or replace function public.create_order_internal(p_user uuid, p_slug text, p_code text, p_items jsonb,
-  p_name text, p_email text default null)
+  p_name text, p_email text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   e public.events; t public.ticket_types; it jsonb; q int; n int := 0; sub int := 0;
