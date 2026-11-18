@@ -476,7 +476,7 @@ async function route(){
     toast(r==='ok' ? 'Mercado Pago conectado ✓' : r==='expired' ? 'La conexión tardó mucho. Intenta otra vez.' : 'No se pudo conectar Mercado Pago. Intenta otra vez.');
     history.replaceState(null, '', location.pathname + location.hash);
   }
-  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id')); }
+  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id'), qs.get('ref_payco')); }
   const [a,b,c] = location.hash.replace(/^#\/?/,'').split('/');
   app().classList.toggle('narrow', !['','e'].includes(a||''));
   renderTabs(a==='e'?'':(['flyer','editar','scan','evento','admin','login'].includes(a)?'panel':a||''));
@@ -757,9 +757,10 @@ async function startPayment(){
 /* ================================================================
    CONFIRMACIÓN DE PAGO
    ================================================================ */
-async function vOrder(id, k, txId){
+async function vOrder(id, k, txId, refPayco){
   app().innerHTML = '<div class="spin" role="status"></div><p class="muted" style="text-align:center">Confirmando tu pago…</p>';
   if (txId) { try { await sb.functions.invoke('confirm-order', { body: { paymentId: txId, orderId: id, token: k } }); } catch(e){} }
+  if (refPayco) { txId = refPayco; try { await sb.functions.invoke('epayco-confirm', { body: { ref_payco: refPayco } }); } catch(e){} }
   let o = null;
   for (let i=0;i<20;i++){
     const { data } = await sb.rpc('get_order', { p_order: id, p_token: k });
@@ -806,6 +807,7 @@ async function openPay(data){
     <div id="payBox" class="paybox"><div class="spin" role="status"></div><p class="muted small" style="text-align:center">Cargando el pago seguro…</p></div>
     <div id="pay3ds"></div>
     <div class="paynote">${icon('lock')}<span>Pago procesado por Mercado Pago. ${esc(APP)} no ve ni guarda los datos de tu tarjeta.</span></div>
+    ${(CFG.EPAYCO_ON || /[?&]davipay=1/.test(location.search)) && CFG.EPAYCO_PUBLIC_KEY ? `<button class="btn" style="margin-top:14px" onclick="payEpayco()">Pagar con Davipay (Apple Pay, débito, PSE, Nequi)</button>` : ''}
     <a class="btn alt" style="margin-top:14px" href="${esc(data.checkoutUrl)}">Pagar en Mercado Pago (PSE, tarjeta o Apple Pay)</a>
     <p class="note" style="text-align:center">¿Tu tarjeta no pasa aquí? Toca el botón de arriba y paga en Mercado Pago, o usa <b style="color:var(--txt)">PSE</b>: sale directo de tu cuenta.<br>Tus boletas quedan apartadas 30 minutos.</p>`;
   window.scrollTo(0, 0);
@@ -857,6 +859,21 @@ async function submitPay(formData){
   if (r?.status === 'in_process' || r?.status === 'pending') return goOrder(r.paymentId);
   toast(r?.error || 'El pago no pasó. Intenta otra vez.');
   await renderBrick();                                                     // formulario limpio para reintentar
+}
+/* Davipay / ePayco: su propio checkout (Apple Pay, débito, PSE, Nequi). Vuelve a ?o=&k=&ref_payco= y
+   epayco-confirm valida el pago con ePayco antes de emitir las boletas. */
+async function payEpayco(){
+  try { await loadScript('https://checkout.epayco.co/checkout.js'); } catch(e) { return toast('No se pudo abrir Davipay. Intenta otra vez.'); }
+  const h = ePayco.checkout.configure({ key: CFG.EPAYCO_PUBLIC_KEY, test: !!CFG.EPAYCO_TEST });
+  h.open({
+    name: EV.name, description: `Boletas · ${EV.name}`.slice(0, 100), invoice: PAY.reference,
+    currency: 'cop', amount: String(PAY.amount), tax_base: '0', tax: '0', tax_ico: '0', country: 'co', lang: 'es',
+    external: 'false', extra1: PAY.orderId,
+    response: `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}`,
+    confirmation: `${CFG.SUPABASE_URL}/functions/v1/epayco-confirm`,
+    name_billing: profile?.name || GUEST?.name || '', email_billing: myEmail() || GUEST?.email || '',
+    methodsDisable: ['CASH'],
+  });
 }
 async function show3ds(r){
   if (BRICK) { try { BRICK.unmount(); } catch(e){} BRICK = null; }
