@@ -76,6 +76,13 @@ export async function syncOrderPayment(admin: SupabaseClient, order: Order, paym
     p_amount_in_cents: Math.round(Number(p.transaction_amount) * 100),
   });
   if (error) { console.error(error); return { ok: false, http: 500, error: "No se pudo confirmar." }; }
+  // Motivo exacto de rechazos y pendientes (p. ej. cc_rejected_high_risk) para poder diagnosticar
+  if (p.status !== "approved") {
+    console.log("pago", order.reference, p.id, p.payment_method_id, p.payment_type_id, p.status, p.status_detail);
+    await admin.from("orders").update({
+      wompi_status: `${String(p.status).toUpperCase()}:${p.status_detail ?? ""}:${p.payment_method_id ?? ""}`.slice(0, 120),
+    }).eq("id", order.id).neq("status", "paid");
+  }
   // Cobrado en la cuenta de Cupo: guarda la comisión REAL de Mercado Pago (lo que no llegó neto),
   // así el saldo del organizador es exacto.
   const net = Number(p?.transaction_details?.net_received_amount);
