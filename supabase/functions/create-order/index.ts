@@ -53,6 +53,9 @@ Deno.serve(async (req) => {
     .update({ mp_seller_id: split ? ev.owner_id : null })
     .eq("id", data.orderId).select("qty, platform_fee").single();
   const qty = ord?.qty ?? 1;
+  const nm = String(body?.name ?? "").trim().split(/\s+/);
+  const buyerFirst = nm[0] || "", buyerLast = nm.slice(1).join(" ") || nm[0] || "";
+  const buyerEmail = guestEmail || String(u?.user?.email || "").toLowerCase();
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const site = (Deno.env.get("SITE_URL") || req.headers.get("origin") || "").replace(/\/+$/, "");
@@ -65,7 +68,11 @@ Deno.serve(async (req) => {
       quantity: 1,
       unit_price: Number(data.amountInCents) / 100,
       currency_id: "COP",
+      category_id: "tickets",
+      description: `Boletas para ${ev.name}`.slice(0, 250),
     }],
+    // Datos del comprador para el antifraude de Mercado Pago (aprueba más tarjetas, sobre todo débito)
+    payer: { name: buyerFirst, surname: buyerLast, email: buyerEmail },
     external_reference: data.reference,
     back_urls: { success: back, pending: back, failure: back },
     auto_return: "approved",
