@@ -878,10 +878,7 @@ async function payBold(){
     const { data, error } = await sb.functions.invoke('bold', { body: { action: 'sign', orderId: PAY.orderId, token: PAY.token } });
     r = data; if (error && !r?.error) { try { r = await error.context.json(); } catch(e) {} }
   } catch(e) {}
-  const fallback = (msg) => {   // si Bold no abre, no se pierde la venta: se paga en Mercado Pago
-    if (r?.error && /venci|pagada|no encontrada/i.test(r.error)) return toast(r.error);
-    toast(msg || 'Abriendo otro medio de pago…'); setTimeout(() => { location.href = PAY.checkoutUrl; }, 900);
-  };
+  const fallback = () => { toast(r?.error || 'No se pudo abrir el pago. Intenta otra vez en un momento.'); };   // solo Bold
   if (!r || r.error || !r.integritySignature) { console.error('bold sign', r); return fallback(); }
   try {
     await loadScript('https://checkout.bold.co/library/boldPaymentButton.js');

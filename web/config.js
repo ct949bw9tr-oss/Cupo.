@@ -6,7 +6,7 @@ window.CUPO_CONFIG = {
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhsa3lydGp0d3l6cG1qc2Rva2duIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ0MzAyMTEsImV4cCI6MjExMDAwNjIxMX0.IC9cZppXosPwzBB6x3pJHDbS9eWVqsDZR0aDJ3LPM-E",
   DEMO: false,
   OTP_LENGTH: 6, // dígitos del código que llega al correo (igual que en Supabase → Auth → Email)
-  BOLD_ON: true, // true = se paga con Bold (se abre encima de Cupo); Mercado Pago solo si Bold no abre
+  BOLD_ON: true, // true = se paga con Bold (se abre encima de Cupo); sin Mercado Pago
   EPAYCO_ON: false,  // true para mostrar "Pagar con Davipay" (cuando la cuenta de Davipay esté aprobada)
   EPAYCO_TEST: false, // true = modo pruebas de ePayco (los pagos de prueba NO emiten boletas)
   EPAYCO_PUBLIC_KEY: "e7d3470d0b9817ca6f55406528450617",
