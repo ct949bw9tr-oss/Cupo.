@@ -738,7 +738,7 @@ async function startPayment(){
   closeModal();
   if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
     if (!data.checkoutUrl) { toast('No se pudo iniciar el pago. Intenta otra vez.'); return; }
-    if (CFG.BOLD_ON || /[?&]bold=1/.test(location.search)) return choosePay(data);   // escoger Bold o Mercado Pago
+    if (CFG.BOLD_ON || /[?&]bold=1/.test(location.search)) { PAY = data; return payBold(); }   // Bold directo (Mercado Pago solo si Bold falla)
     if (CFG.MP_BRICK && (data.publicKey || CFG.MP_PUBLIC_KEY) && data.amount) return openPay(data);   // formulario dentro de Cupo (apagado: se paga en Mercado Pago)
     location.href = data.checkoutUrl; return;   // página de pago de Mercado Pago
   }
@@ -878,16 +878,21 @@ async function payBold(){
     const { data, error } = await sb.functions.invoke('bold', { body: { action: 'sign', orderId: PAY.orderId, token: PAY.token } });
     r = data; if (error && !r?.error) { try { r = await error.context.json(); } catch(e) {} }
   } catch(e) {}
-  if (!r || r.error || !r.integritySignature) { toast(r?.error || 'No se pudo abrir Bold. Prueba con Mercado Pago.'); if (btn) { btn.disabled = false; btn.textContent = 'Tarjeta débito o crédito, PSE o Nequi'; } return; }
+  const fallback = (msg) => {   // si Bold no abre, no se pierde la venta: se paga en Mercado Pago
+    if (r?.error && /venci|pagada|no encontrada/i.test(r.error)) return toast(r.error);
+    toast(msg || 'Abriendo otro medio de pago…'); setTimeout(() => { location.href = PAY.checkoutUrl; }, 900);
+  };
+  if (!r || r.error || !r.integritySignature) { console.error('bold sign', r); return fallback(); }
   try {
     await loadScript('https://checkout.bold.co/library/boldPaymentButton.js');
     const checkout = new BoldCheckout({
       orderId: r.orderId, currency: r.currency, amount: r.amount, apiKey: r.apiKey, integritySignature: r.integritySignature,
       description: `Boletas · ${EV.name}`.slice(0, 100),
       redirectionUrl: `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}`,
+      renderMode: 'embedded',   // el pago se abre encima de Cupo, sin salir de la página
     });
     closeModal(); checkout.open();
-  } catch(e) { console.error(e); toast('No se pudo abrir Bold. Prueba con Mercado Pago.'); if (btn) { btn.disabled = false; btn.textContent = 'Tarjeta débito o crédito, PSE o Nequi'; } }
+  } catch(e) { console.error(e); fallback(); }
 }
 /* Davipay / ePayco: su propio checkout (Apple Pay, débito, PSE, Nequi). Vuelve a ?o=&k=&ref_payco= y
    epayco-confirm valida el pago con ePayco antes de emitir las boletas. */
