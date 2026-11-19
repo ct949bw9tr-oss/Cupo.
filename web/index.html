@@ -886,7 +886,7 @@ async function payBold(){
       orderId: r.orderId, currency: r.currency, amount: r.amount, apiKey: r.apiKey, integritySignature: r.integritySignature,
       description: `Boletas · ${EV.name}`.slice(0, 100),
       redirectionUrl: `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}`,
-      renderMode: 'redirect',   // página de Bold: Apple Pay no funciona dentro de una ventana incrustada
+      renderMode: 'embedded',   // el pago se abre encima de Cupo, sin salir de la página
     });
     closeModal(); checkout.open();
   } catch(e) { console.error(e); fallback(); }
