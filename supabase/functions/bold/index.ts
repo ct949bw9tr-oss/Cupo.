@@ -6,7 +6,7 @@
 //  3. Webhook de Bold (cualquier POST que traiga una referencia CUP-...).
 // En 2 y 3 NUNCA se confía en lo que llega: se consulta el pago a la API de Bold con la referencia
 // y finalize_order exige que el monto sea el de la orden.
-// Secretos: BOLD_API_KEY (llave de identidad) y BOLD_SECRET_KEY (llave secreta).
+// Secreto: BOLD_SECRET_KEY (llave secreta). La llave de identidad (pública) está abajo; BOLD_API_KEY la reemplaza si existe.
 import { adminClient } from "../_shared/mp.ts";
 
 const cors = {
@@ -29,7 +29,9 @@ async function sha256(s: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
-  const apiKey = Deno.env.get("BOLD_API_KEY") ?? "", secret = Deno.env.get("BOLD_SECRET_KEY") ?? "";
+  // La llave de identidad es pública (va en el navegador); la secreta solo vive en los secretos de Supabase.
+  const apiKey = Deno.env.get("BOLD_API_KEY") || "68KMeiySN6ff96Ru6VEY25qkm_TWaeZ4Vp9b_u63Mko";
+  const secret = Deno.env.get("BOLD_SECRET_KEY") ?? "";
   if (!apiKey || !secret) return json({ error: "Bold todavía no está configurado." }, 503);
 
   const raw = await req.text();
