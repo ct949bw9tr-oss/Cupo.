@@ -476,7 +476,7 @@ async function route(){
     toast(r==='ok' ? 'Mercado Pago conectado ✓' : r==='expired' ? 'La conexión tardó mucho. Intenta otra vez.' : 'No se pudo conectar Mercado Pago. Intenta otra vez.');
     history.replaceState(null, '', location.pathname + location.hash);
   }
-  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id'), qs.get('ref_payco')); }
+  if (qs.get('o') && qs.get('k') && location.hash === '') { renderTabs('boletas'); return vOrder(qs.get('o'), qs.get('k'), qs.get('payment_id') || qs.get('collection_id'), qs.get('ref_payco'), qs.get('bold-order-id')); }
   const [a,b,c] = location.hash.replace(/^#\/?/,'').split('/');
   app().classList.toggle('narrow', !['','e'].includes(a||''));
   renderTabs(a==='e'?'':(['flyer','editar','scan','evento','admin','login'].includes(a)?'panel':a||''));
@@ -738,6 +738,7 @@ async function startPayment(){
   closeModal();
   if (!(CFG.DEMO && typeof WidgetCheckout !== 'undefined')) {
     if (!data.checkoutUrl) { toast('No se pudo iniciar el pago. Intenta otra vez.'); return; }
+    if (CFG.BOLD_ON || /[?&]bold=1/.test(location.search)) return choosePay(data);   // escoger Bold o Mercado Pago
     if (CFG.MP_BRICK && (data.publicKey || CFG.MP_PUBLIC_KEY) && data.amount) return openPay(data);   // formulario dentro de Cupo (apagado: se paga en Mercado Pago)
     location.href = data.checkoutUrl; return;   // página de pago de Mercado Pago
   }
@@ -757,10 +758,11 @@ async function startPayment(){
 /* ================================================================
    CONFIRMACIÓN DE PAGO
    ================================================================ */
-async function vOrder(id, k, txId, refPayco){
+async function vOrder(id, k, txId, refPayco, boldRef){
   app().innerHTML = '<div class="spin" role="status"></div><p class="muted" style="text-align:center">Confirmando tu pago…</p>';
   if (txId) { try { await sb.functions.invoke('confirm-order', { body: { paymentId: txId, orderId: id, token: k } }); } catch(e){} }
   if (refPayco) { txId = refPayco; try { await sb.functions.invoke('epayco-confirm', { body: { ref_payco: refPayco } }); } catch(e){} }
+  if (boldRef) { txId = boldRef; try { await sb.functions.invoke('bold', { body: { action: 'confirm', reference: boldRef } }); } catch(e){} }
   let o = null;
   for (let i=0;i<20;i++){
     const { data } = await sb.rpc('get_order', { p_order: id, p_token: k });
@@ -859,6 +861,33 @@ async function submitPay(formData){
   if (r?.status === 'in_process' || r?.status === 'pending') return goOrder(r.paymentId);
   toast(r?.error || 'El pago no pasó. Intenta otra vez.');
   await renderBrick();                                                     // formulario limpio para reintentar
+}
+/* Bold: el comprador escoge Bold (débito, crédito, PSE, Nequi) o Mercado Pago. La firma de integridad la hace
+   el servidor (función bold) con el monto de la orden; al volver (?bold-order-id=) se confirma con la API de Bold. */
+function choosePay(data){
+  PAY = data;
+  modal(`<h2>¿Cómo quieres pagar?</h2><p class="muted small" style="margin-top:4px">Total ${COP(data.amount)} · tus boletas quedan apartadas 30 minutos.</p>
+    <button class="btn" id="bBold" style="margin-top:16px" onclick="payBold()">Tarjeta débito o crédito, PSE o Nequi</button>
+    <p class="note" style="text-align:center;margin-top:6px">Procesado por Bold</p>
+    <a class="btn alt" style="margin-top:12px" href="${esc(data.checkoutUrl)}">Mercado Pago (Apple Pay, tarjeta, PSE)</a>`);
+}
+async function payBold(){
+  const btn = $('bBold'); if (btn) { btn.disabled = true; btn.textContent = 'Abriendo Bold…'; }
+  let r = null;
+  try {
+    const { data, error } = await sb.functions.invoke('bold', { body: { action: 'sign', orderId: PAY.orderId, token: PAY.token } });
+    r = data; if (error && !r?.error) { try { r = await error.context.json(); } catch(e) {} }
+  } catch(e) {}
+  if (!r || r.error || !r.integritySignature) { toast(r?.error || 'No se pudo abrir Bold. Prueba con Mercado Pago.'); if (btn) { btn.disabled = false; btn.textContent = 'Tarjeta débito o crédito, PSE o Nequi'; } return; }
+  try {
+    await loadScript('https://checkout.bold.co/library/boldPaymentButton.js');
+    const checkout = new BoldCheckout({
+      orderId: r.orderId, currency: r.currency, amount: r.amount, apiKey: r.apiKey, integritySignature: r.integritySignature,
+      description: `Boletas · ${EV.name}`.slice(0, 100),
+      redirectionUrl: `${siteURL()}?o=${PAY.orderId}&k=${PAY.token}`,
+    });
+    closeModal(); checkout.open();
+  } catch(e) { console.error(e); toast('No se pudo abrir Bold. Prueba con Mercado Pago.'); if (btn) { btn.disabled = false; btn.textContent = 'Tarjeta débito o crédito, PSE o Nequi'; } }
 }
 /* Davipay / ePayco: su propio checkout (Apple Pay, débito, PSE, Nequi). Vuelve a ?o=&k=&ref_payco= y
    epayco-confirm valida el pago con ePayco antes de emitir las boletas. */
