@@ -1127,7 +1127,8 @@ async function vDashboard(id){
     ${e.ticket_types.sort((a,b)=>a.sort-b.sort||a.price-b.price).map(t=>{const prev=e.ticket_types.find(x=>x.id===t.unlock_after);
       const st = t.sales_end && new Date(t.sales_end)<new Date() ? 'Cerrada' : t.sold>=t.quantity ? 'Agotada' : (prev && prev.sold<prev.quantity && !(prev.sales_end&&new Date(prev.sales_end)<new Date())) ? 'En espera' : 'A la venta';
       return `<div class="it"><span>${esc(t.name)} · ${COP(t.price)}<span class="badge ${st==='A la venta'?'on':st==='Agotada'?'warn':''}">${st}</span>${prev?`<br><span class="small muted">Se abre después de ${esc(prev.name)}</span>`:''}</span><span class="muted">${t.sold}/${t.quantity}</span></div>`}).join('')}</div></div>
-  <div class="card"><h3>Compradores (${(orders||[]).length})</h3><p class="small muted" style="margin-top:4px">Solo tú ves esta lista.</p>
+  <div class="card"><h3>Compradores (${(orders||[]).length})</h3><p class="small muted" style="margin-top:4px">Solo tú ves esta lista. Cada comprador recibe su boleta por correo al pagar.</p>
+    ${(orders||[]).length?`<button class="btn alt sm" id="mailBtn" style="margin-top:10px" onclick="sendTicketMails('${e.id}')">${icon('send')} Mandar boletas por correo a los que faltan</button>`:''}
     <div class="list" style="margin-top:6px">${(orders||[]).length?orders.map(o=>`<div class="it"><span>${esc(o.buyer_name)}<br><span class="small muted" style="overflow-wrap:anywhere">${esc(o.buyer_email||'')}</span></span>
       <span class="small" style="text-align:right">${o.qty} boleta${o.qty===1?'':'s'}<br><span class="muted">${COP(o.total)} · ${new Date(o.created_at).toLocaleDateString('es-CO',{day:'numeric',month:'short'})}</span></span></div>`).join(''):'<p class="muted small">Nadie ha pagado todavía.</p>'}</div></div>
   <div class="card"><div class="row"><h3>Asistentes (${tickets.length})</h3>${tickets.length?'<button class="btn alt sm" style="flex:none" onclick="exportCSV()">Descargar Excel</button>':''}</div>
@@ -1138,6 +1139,14 @@ async function vDashboard(id){
 </span></div>`}).join(''):'<p class="muted small">Nadie ha comprado todavía.</p>'}</div></div>
   <a class="btn alt" href="#/editar/${e.id}">Editar evento</a>
   <button class="btn alt" style="margin-top:10px" onclick="togglePublish('${e.id}',${!e.published})">${e.published?'Ocultar evento (pausar ventas)':'Publicar evento'}</button>`;
+}
+async function sendTicketMails(eventId){
+  const b = $('mailBtn'); if (b) { b.disabled = true; b.textContent = 'Mandando…'; }
+  let r = null;
+  try { const { data, error } = await sb.functions.invoke('send-tickets', { body: { eventId } }); r = data; if (error && !r) { try { r = await error.context.json(); } catch(e) {} } } catch(e) {}
+  if (b) { b.disabled = false; b.textContent = 'Mandar boletas por correo a los que faltan'; }
+  if (!r || r.error) return toast(r?.error || 'No se pudieron mandar los correos.');
+  toast(r.pending ? `Listo: ${r.sent} de ${r.pending} correos enviados` : 'Todos los compradores ya tienen su boleta en el correo');
 }
 function filterAtt(q){ q=q.toLowerCase(); document.querySelectorAll('#att .it').forEach(el=>el.classList.toggle('hide', !el.dataset.s.includes(q))); }
 async function togglePublish(id, val){ const { error } = await sb.from('events').update({ published: val }).eq('id', id); if (error) return toast(error.message); toast(val?'Evento publicado':'Evento oculto'); route(); }

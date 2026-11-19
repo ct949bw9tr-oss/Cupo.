@@ -8,6 +8,7 @@
 // y finalize_order exige que el monto sea el de la orden.
 // Secreto: BOLD_SECRET_KEY (llave secreta). La llave de identidad (pública) está abajo; BOLD_API_KEY la reemplaza si existe.
 import { adminClient } from "../_shared/mp.ts";
+import { sendTicketsEmail } from "../_shared/email.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -77,6 +78,7 @@ Deno.serve(async (req) => {
     p_amount_in_cents: Math.round((Number.isFinite(amount) ? amount : 0) * 100),
   });
   if (error) { console.error(error); return json({ error: "No se pudo confirmar." }, 500); }
+  if (status === "APPROVED") await sendTicketsEmail(admin, reference);   // boleta al correo (una sola vez)
   if (status !== "APPROVED") {
     console.log("bold", reference, st, v.payment_method, JSON.stringify(v).slice(0, 300));
     await admin.from("orders").update({ wompi_status: `BOLD:${st}`.slice(0, 120) }).eq("reference", reference).neq("status", "paid");

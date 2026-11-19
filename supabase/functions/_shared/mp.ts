@@ -3,6 +3,7 @@
 // - El estado de un pago SIEMPRE se consulta a Mercado Pago con el token de la cuenta que cobró:
 //   nunca se confía en lo que diga el navegador o el aviso.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { sendTicketsEmail } from "./email.ts";
 
 export const MP_API = "https://api.mercadopago.com";
 
@@ -91,5 +92,6 @@ export async function syncOrderPayment(admin: SupabaseClient, order: Order, paym
     const { error: feeErr } = await admin.from("orders").update({ gateway_fee: fee }).eq("id", order.id);
     if (feeErr) console.error("No se pudo guardar la comisión real", feeErr);
   }
+  if (p.status === "approved") await sendTicketsEmail(admin, order.reference);   // boleta al correo (una sola vez)
   return { ok: true, http: 200, status: p.status, result: data };
 }

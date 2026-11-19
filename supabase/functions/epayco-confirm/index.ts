@@ -6,6 +6,7 @@
 // Si viene firma (x_signature), también se verifica con EPAYCO_P_CUST_ID y EPAYCO_P_KEY.
 // Se despliega con verify_jwt = false.
 import { adminClient } from "../_shared/mp.ts";
+import { sendTicketsEmail } from "../_shared/email.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -76,6 +77,7 @@ Deno.serve(async (req) => {
     p_amount_in_cents: Math.round(Number(d.x_amount) * 100),
   });
   if (error) { console.error(error); return json({ error: "No se pudo confirmar." }, 500); }
+  if (status === "APPROVED") await sendTicketsEmail(admin, reference);
   if (status !== "APPROVED") {
     console.log("epayco", reference, refPayco, code, d.x_response, d.x_response_reason_text, d.x_franchise);
     await admin.from("orders").update({ wompi_status: `EPAYCO:${code}:${String(d.x_response_reason_text ?? "").slice(0, 80)}` })
