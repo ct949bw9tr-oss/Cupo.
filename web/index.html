@@ -186,6 +186,22 @@ nav.tabs a:hover{color:var(--txt)}
 .ticket .q::before{left:-13px}.ticket .q::after{right:-13px}
 .ticket .qr{background:#fff;padding:9px;border-radius:16px;flex:none;line-height:0;width:138px;height:138px}
 .ticket .qr img,.ticket .qr canvas{display:block}
+.pass{background:#000;border:1px solid #1d1d24;border-radius:18px;overflow:hidden;margin-top:16px;box-shadow:0 18px 40px rgba(0,0,0,.45)}
+.pass .ph{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 16px 12px}
+.pass .plogo{font-family:var(--fd);font-stretch:125%;font-weight:900;font-size:24px;letter-spacing:-.04em;color:var(--txt);display:inline-flex;align-items:baseline;line-height:1;margin-top:6px}
+.pass .plogo i{display:inline-block;width:.3em;height:.3em;border-radius:50%;background:var(--acc);margin-left:.1em;box-shadow:0 0 12px rgba(200,255,61,.6)}
+.pass .pd{text-align:right}.pass small{display:block;font-size:10px;letter-spacing:.12em;font-weight:700;color:#bebec4}
+.pass .pd b{display:block;font-size:19px;font-weight:500;color:var(--txt);margin-top:1px}
+.pass .pstrip{height:150px;background-size:cover;background-position:center;position:relative}
+.pass .pstrip::after{content:"";position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,0) 55%,#000)}
+.pass .pf{padding:16px 18px 0}.pass .pf b{display:block;font-size:20px;font-weight:500;color:var(--txt);margin-top:3px}
+.pass .prow{display:flex;justify-content:space-between;gap:12px;padding:14px 18px 0}.pass .prow .r{text-align:right}
+.pass .prow b{display:block;font-size:16px;font-weight:500;color:var(--txt);margin-top:3px}
+.pass .pqr{display:flex;flex-direction:column;align-items:center;padding:24px 18px 18px}
+.pass .qrbox{background:#fff;padding:10px;border-radius:8px;line-height:0}.pass .qrbox img,.pass .qrbox canvas{display:block}
+.pass .pcode{margin-top:10px;font-size:13px;letter-spacing:.18em;color:#bebec4}
+.pass .status{margin-top:6px;font-size:13px;font-weight:600}
+.pass .pextra{padding:0 16px 16px}.pass .wallet{margin:0 0 10px}
 .paybox{background:#111115;border:1px solid var(--line);border-radius:var(--r);padding:6px;min-height:220px;margin-top:14px}
 .paynote{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:12.5px;color:var(--mut)}
 .paynote svg{width:16px;height:16px;flex:none;margin-top:1px}
@@ -783,16 +799,14 @@ async function vOrder(id, k, txId, refPayco, boldRef){
   const tix = o.tickets || [];
   app().innerHTML = `<div class="hero c">${orb('check','ok')}<h1>¡Estás dentro!</h1>
     <p>${o.qty} boleta${o.qty===1?'':'s'} para <b style="color:var(--txt)">${esc(o.event.name)}</b>.${session ? ` Quedaron guardadas en tu cuenta de ${APP}.` : ''}</p></div>
-    ${tix.map((t,i)=>`<div class="ticket" style="margin-top:16px"><div class="q"><div class="qr" id="oqr_${i}"></div><div style="min-width:0">
-      <div class="small muted">${esc(t.type_name)}</div><b style="font-size:16px">${esc(t.holder_name)}</b><div class="code" style="margin-top:8px">${esc(t.code)}</div>
-      <div class="status" style="color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'Ya entró':'Lista para entrar'}</div></div></div></div>`).join('')}
+    ${tix.map((t,i)=>passCard(t, o.event, 'oqr_'+i, '')).join('')}
     ${session
       ? `<a class="btn" style="margin-top:22px" href="${siteURL()}#/boletas">Ver mis boletas</a>
          ${o.qty>1?'<p class="note" style="text-align:center">¿Compraste para amigos? Desde "Boletas" se las pasas a su correo.</p>':''}`
       : `<p class="note" style="text-align:center;margin-top:18px">Toma pantallazo de tu QR. Para volver a verlo cuando quieras, entra a ${esc(APP)} con <b style="color:var(--txt)">${esc(o.buyer_email||'tu correo')}</b>.</p>
          <a class="btn alt" style="margin-top:12px" href="${siteURL()}#/boletas">Entrar con mi correo</a>`}
     <p class="note" style="text-align:center;margin-top:18px">Orden ${esc(o.reference)} · Total ${COP(o.total)}</p>`;
-  tix.forEach((t,i)=>{ try { new QRCode($('oqr_'+i), { text: t.code, width:120, height:120, correctLevel: QRCode.CorrectLevel.M }); } catch(e){} });
+  tix.forEach((t,i)=>{ try { new QRCode($('oqr_'+i), { text: t.code, width:184, height:184, correctLevel: QRCode.CorrectLevel.M }); } catch(e){} });
 }
 
 /* ================================================================
@@ -923,6 +937,22 @@ async function show3ds(r){
 /* ================================================================
    MIS BOLETAS + TRANSFERIR
    ================================================================ */
+/* Boleta estilo pase de Wallet: cupo. arriba, fecha a la derecha, franja del flyer borroso, datos y QR */
+function passCard(t, e, qrId, extra){
+  const d = new Date(e.starts_at);
+  const hora = d.toLocaleTimeString('es-CO',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).toUpperCase();
+  const fecha = d.toLocaleDateString('es-CO',{timeZone:TZ,day:'numeric',month:'long'});
+  const strip = `url('${siteURL()}covers/strip-${encodeURIComponent(e.slug||'')}@2x.png')` + (e.cover_url ? `, url('${esc(e.cover_url)}')` : '');
+  return `<div class="pass">
+    <div class="ph"><span class="plogo">cupo<i></i></span><div class="pd"><small>${esc(hora)}</small><b>${esc(fecha)}</b></div></div>
+    <div class="pstrip" style="background-image:${strip}"></div>
+    <div class="pf"><small>EVENTO</small><b>${esc(e.name)}</b></div>
+    <div class="prow"><div><small>BOLETA</small><b>${esc(t.type_name)}</b></div><div class="r"><small>A NOMBRE DE</small><b>${esc(t.holder_name)}</b></div></div>
+    <div class="pqr"><div class="qrbox" id="${qrId}"></div><div class="pcode">${esc(t.code)}</div>
+      <div class="status" style="color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'Ya entró':'Lista para entrar'}</div></div>
+    ${extra ? `<div class="pextra">${extra}</div>` : ''}
+  </div>`;
+}
 let MY = [];
 const walletURL = code => `${CFG.SUPABASE_URL}/functions/v1/wallet-pass?code=${encodeURIComponent(code)}`;
 async function vMyTickets(){
@@ -931,17 +961,15 @@ async function vMyTickets(){
   MY = data || [];
   const upcoming = MY.filter(t=>new Date(t.event.starts_at) > new Date(Date.now()-12*36e5));
   const past = MY.filter(t=>!upcoming.includes(t));
-  const card = (t,i) => { const e=t.event; return `<div class="ticket">
-    <div class="h" style="${coverStyle(e)}"><span class="ty">${esc(t.type_name)}</span><h3 style="text-shadow:0 2px 12px rgba(0,0,0,.4)">${esc(e.name)}</h3><div class="small" style="font-weight:500">${whenLabel(e.starts_at)} · ${esc(e.venue)}</div></div>
-    <div class="q"><div class="qr" id="qr_${i}"></div><div style="min-width:0"><div class="small muted">A nombre de</div><b style="font-size:16px">${esc(t.holder_name)}</b>
-      <div class="code" style="margin-top:8px">${t.code}</div><div class="status" style="color:${t.checked_in_at?'var(--mut)':'var(--ok)'}">${t.checked_in_at?'Ya entró':'Lista para entrar'}</div>${t.transfers>0?'<span class="badge" style="margin:8px 0 0">Te la pasaron</span>':''}</div></div>
+  const card = (t,i) => { const e=t.event; return passCard(t, e, 'qr_'+i, `
+    ${t.transfers>0?'<span class="badge" style="margin:0 0 10px">Te la pasaron</span>':''}
     ${CFG.APPLE_WALLET && !t.checked_in_at ? `<a class="wallet" href="${esc(walletURL(t.code))}" aria-label="Agregar a Apple Wallet">${icon('wallet')}<span><small>Agregar a</small>Apple Wallet</span></a>`:''}
     <div class="acts">${!t.checked_in_at && e.allow_transfers ? `<button class="btn alt sm" onclick="openTransfer(${i})">${icon('send')} Transferir</button>`:''}
-      <a class="btn alt sm" href="#/e/${e.slug}">Ver evento</a></div></div>`; };
+      <a class="btn alt sm" href="#/e/${e.slug}">Ver evento</a></div>`); };
   app().innerHTML = `<div class="hero" style="margin-top:6px"><h1>Boletas</h1><p>${esc(myEmail())}</p></div>
     ${upcoming.length ? upcoming.map(t=>card(t, MY.indexOf(t))).join('') : `<div class="empty"><div class="orb">${icon('ticket')}</div><b>Todavía no tienes boletas</b>Cuando compres, tu QR aparece aquí.<a class="btn sm" href="#/">Explorar eventos</a></div>`}
     ${past.length ? `<div class="sec"><h3 class="muted">Eventos pasados</h3>${past.map(t=>`<div class="list"><div class="it"><span>${esc(t.event.name)}</span><span class="muted">${whenLabel(t.event.starts_at)}</span></div></div>`).join('')}</div>`:''}`;
-  upcoming.forEach(t=>{ const i=MY.indexOf(t); try{ new QRCode($('qr_'+i),{text:t.code,width:120,height:120,correctLevel:QRCode.CorrectLevel.M}); }catch(err){} });
+  upcoming.forEach(t=>{ const i=MY.indexOf(t); try{ new QRCode($('qr_'+i),{text:t.code,width:184,height:184,correctLevel:QRCode.CorrectLevel.M}); }catch(err){} });
 }
 let XFER = null;
 function openTransfer(i){

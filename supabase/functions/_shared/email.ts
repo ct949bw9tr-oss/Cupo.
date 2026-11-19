@@ -33,20 +33,33 @@ export async function sendTicketsEmail(admin: SupabaseClient, reference: string)
     const qrBase = `${Deno.env.get("SUPABASE_URL")}/functions/v1/ticket-qr?code=`;
     const orderUrl = `${SITE}/?o=${o.id}&k=${o.token}`;
 
+    // Franja del flyer borroso (web/covers/strip-<slug>@2x.png); si el evento no tiene, se usa la portada
+    let strip = e.cover_url || "";
+    try { const h = await fetch(`${SITE}/covers/strip-${e.slug}@2x.png`, { method: "HEAD" }); if (h.ok) strip = `${SITE}/covers/strip-${e.slug}@2x.png`; } catch { /* portada */ }
+    const fechaCorta = new Intl.DateTimeFormat("es-CO", { timeZone: tz, day: "numeric", month: "long" }).format(start);
+    const F = "font-family:-apple-system,Helvetica,Arial,sans-serif";
+    const label = (t: string, right = false) => `<div style="${F};font-size:10px;letter-spacing:1.5px;color:#bebec4;font-weight:bold;${right ? "text-align:right" : ""}">${t}</div>`;
+
+    // Cada boleta es un "pase" estilo Wallet: cupo. arriba, fecha a la derecha, franja del flyer, datos y QR
     const ticketBlocks = tix.map((t, i) => `
-      <tr><td style="padding:0 0 18px">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#111115;border:1px solid #2a1010;border-radius:20px">
-          <tr><td style="padding:22px 22px 6px;font-family:Helvetica,Arial,sans-serif">
-            <div style="font-size:11px;letter-spacing:4px;color:#ff3b3b;font-weight:bold">BOLETA ${tix.length > 1 ? `${i + 1} DE ${tix.length}` : ""}</div>
-            <div style="font-size:22px;color:#f6f6f1;font-weight:bold;margin-top:6px">${esc(t.holder_name)}</div>
-            <div style="font-size:14px;color:#9b9ba8;margin-top:2px">${esc(t.type_name)}</div>
-          </td></tr>
-          <tr><td align="center" style="padding:14px 22px 6px">
-            <div style="background:#ffffff;border-radius:18px;padding:14px;display:inline-block;border:3px solid #ff3b3b">
-              <img src="${qrBase}${encodeURIComponent(t.code)}" width="220" height="220" alt="QR ${esc(t.code)}" style="display:block;width:220px;height:220px">
+      <tr><td style="padding:0 0 22px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#000000;border-radius:16px;overflow:hidden;border:1px solid #1d1d24">
+          <tr>
+            <td style="padding:14px 16px 12px;${F};font-size:24px;font-weight:900;color:#f6f6f1;letter-spacing:-1px">cupo<span style="color:#c8ff3d">.</span></td>
+            <td align="right" style="padding:14px 16px 12px">${label(esc(hora.toUpperCase()), true)}<div style="${F};font-size:19px;color:#f6f6f1;text-align:right">${esc(fechaCorta)}</div></td>
+          </tr>
+          ${strip ? `<tr><td colspan="2" style="padding:0;line-height:0"><img src="${esc(strip)}" width="480" alt="" style="display:block;width:100%;max-width:480px;height:auto"></td></tr>` : ""}
+          <tr><td colspan="2" style="padding:16px 18px 0">${label("EVENTO")}<div style="${F};font-size:20px;color:#f6f6f1;margin-top:3px">${esc(e.name)}</div></td></tr>
+          <tr>
+            <td style="padding:14px 18px 0;vertical-align:top">${label(tix.length > 1 ? `BOLETA ${i + 1} DE ${tix.length}` : "BOLETA")}<div style="${F};font-size:16px;color:#f6f6f1;margin-top:3px">${esc(t.type_name)}</div></td>
+            <td align="right" style="padding:14px 18px 0;vertical-align:top">${label("A NOMBRE DE", true)}<div style="${F};font-size:16px;color:#f6f6f1;margin-top:3px;text-align:right">${esc(t.holder_name)}</div></td>
+          </tr>
+          <tr><td colspan="2" align="center" style="padding:26px 18px 8px">
+            <div style="background:#ffffff;border-radius:8px;padding:10px;display:inline-block">
+              <img src="${qrBase}${encodeURIComponent(t.code)}" width="200" height="200" alt="QR ${esc(t.code)}" style="display:block;width:200px;height:200px">
             </div>
           </td></tr>
-          <tr><td align="center" style="padding:10px 22px 22px;font-family:'Courier New',monospace;font-size:18px;letter-spacing:3px;color:#f6f6f1;font-weight:bold">${esc(t.code)}</td></tr>
+          <tr><td colspan="2" align="center" style="padding:4px 18px 22px;${F};font-size:13px;letter-spacing:2px;color:#bebec4">${esc(t.code)}</td></tr>
         </table>
       </td></tr>`).join("");
 
@@ -54,7 +67,6 @@ export async function sendTicketsEmail(admin: SupabaseClient, reference: string)
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#07070a"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px">
   <tr><td style="padding:0 4px 18px;font-family:Helvetica,Arial,sans-serif;font-size:26px;font-weight:900;color:#f6f6f1;letter-spacing:-1px">cupo<span style="color:#c8ff3d">.</span></td></tr>
-  ${e.cover_url ? `<tr><td style="padding:0 0 18px"><img src="${esc(e.cover_url)}" width="480" alt="${esc(e.name)}" style="display:block;width:100%;max-width:480px;border-radius:20px"></td></tr>` : ""}
   <tr><td style="padding:0 4px 18px;font-family:Helvetica,Arial,sans-serif">
     <div style="font-size:13px;letter-spacing:4px;color:#ff3b3b;font-weight:bold">¡ESTÁS DENTRO!</div>
     <div style="font-size:28px;color:#f6f6f1;font-weight:bold;margin-top:6px;letter-spacing:1px">${esc(e.name).toUpperCase()}</div>
