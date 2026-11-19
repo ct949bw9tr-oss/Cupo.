@@ -35,7 +35,7 @@ const pem = (v: string | undefined) => (v ?? "").replace(/\\n/g, "\n").trim();
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const tz = "America/Bogota";
 const fmtDate = (d: Date) =>
-  new Intl.DateTimeFormat("es-CO", { timeZone: tz, weekday: "short", day: "numeric", month: "short" }).format(d);
+  new Intl.DateTimeFormat("es-CO", { timeZone: tz, day: "numeric", month: "long" }).format(d);
 const fmtTime = (d: Date) =>
   new Intl.DateTimeFormat("es-CO", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(d);
 
@@ -66,19 +66,18 @@ Deno.serve(async (req) => {
     organizationName: "Cupo",
     description: `Boleta · ${e.name}`,
     logoText: "",
-    backgroundColor: "rgb(7, 7, 10)",
-    foregroundColor: "rgb(255, 255, 255)",
-    labelColor: "rgb(200, 255, 61)",
+    backgroundColor: "rgb(0, 0, 0)",
+    foregroundColor: "rgb(246, 246, 241)",
+    labelColor: "rgb(190, 190, 196)",
     relevantDate: start.toISOString(),
     expirationDate: new Date(start.getTime() + 24 * 36e5).toISOString(),
     voided: !!t.checked_in_at,
     barcodes: [{ format: "PKBarcodeFormatQR", message: t.code, messageEncoding: "iso-8859-1", altText: t.code }],
+    // Estilo "flyer de la rumba": cupo. arriba a la izquierda, fecha arriba a la derecha,
+    // franja con el flyer borroso (strip) y debajo el evento, la boleta y el QR.
     eventTicket: {
-      primaryFields: [{ key: "event", label: "EVENTO", value: e.name }],
-      secondaryFields: [
-        { key: "date", label: "FECHA", value: fmtDate(start) },
-        { key: "time", label: "HORA", value: fmtTime(start), textAlignment: "PKTextAlignmentRight" },
-      ],
+      headerFields: [{ key: "date", label: fmtTime(start).toUpperCase(), value: fmtDate(start), textAlignment: "PKTextAlignmentRight" }],
+      secondaryFields: [{ key: "event", label: "EVENTO", value: e.name }],
       auxiliaryFields: [
         { key: "type", label: "BOLETA", value: t.type_name },
         { key: "holder", label: "A NOMBRE DE", value: t.holder_name, textAlignment: "PKTextAlignmentRight" },
@@ -95,6 +94,13 @@ Deno.serve(async (req) => {
 
   const files: Record<string, Uint8Array> = { "pass.json": new TextEncoder().encode(JSON.stringify(pass)) };
   for (const [name, data] of Object.entries(PASS_IMAGES)) files[name] = b64(data);
+  // Franja con el flyer borroso del evento (web/covers/strip-<slug>[@2x|@3x].png), si existe
+  for (const [suffix, name] of [["", "strip.png"], ["@2x", "strip@2x.png"], ["@3x", "strip@3x.png"]]) {
+    try {
+      const r = await fetch(`${SITE}/covers/strip-${e.slug}${suffix}.png`);
+      if (r.ok && (r.headers.get("content-type") || "").includes("image/png")) files[name] = new Uint8Array(await r.arrayBuffer());
+    } catch { /* sin franja */ }
+  }
 
   try {
     const zip = buildPkpass(files, { certPem, keyPem, wwdrPem: await wwdrPem() }, forge, zipSync);
